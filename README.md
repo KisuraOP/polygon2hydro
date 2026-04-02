@@ -7,6 +7,7 @@
 
 - 从 contest 包自动发现 `problems/<slug>/...` 目录。
 - 读取题目元数据、题面、测试数据与附件资源。
+- 支持传统题与交互题（根据 `problem.xml` 中 `assets/interactor` 自动识别）。
 - 为每道题生成 Hydro 导入包，核心内容包括：
   - `problem.yaml`
   - `problem_zh.md`
@@ -50,6 +51,7 @@ p2h convert <contest_zip> -o <output_dir> --pid-start P1145 [options]
 - `--only`：仅转换指定 slug；支持重复传参或逗号分隔。
 - `--run-doall`：执行每题 `doall.sh` 生成测试/答案（默认启用）。
 - `--no-run-doall`：跳过 `doall.sh`，仅使用已有测试文件。
+- `--missing-env {warn,ask,error}`：`doall` 依赖预检查策略；`warn` 仅告警并继续（默认），`ask` 交互确认后继续，`error` 直接失败。
 - `--verbose`：输出详细日志。
 
 ## 4. 使用示例
@@ -92,14 +94,30 @@ p2h convert example/polygon-contest-package/contest-56961.zip \
 
 ## 6. 题面转换说明
 
-当前题面转换优先使用 `statement-sections/chinese` 的结构化内容，并输出如下模板：
+当前题面转换优先使用 `statement-sections/chinese` 的结构化内容。
 
+传统题输出模板：
 - `# Description`
 - `# Format`
   - `## Input`
   - `## Output`
 - `# Samples`（`input1/output1`, `input2/output2`, ...）
 - `# Note`
+
+交互题输出模板：
+- `# Description`
+- `# Interaction`
+- `# Samples`（`input1/output1`, `input2/output2`, ...）
+- `# Note`
+
+交互题同时会在 `testdata/config.yaml` 中生成：
+- `type: interactive`
+- `interactor: <from problem.xml assets/interactor/source path filename>`
+- `time: <...ms>`（若可提取）
+- `memory: <...MB>`（若可提取）
+- `subtasks: []`
+
+若题目中无 `assets/interactor`，则保持传统题配置（`type: default`）。
 
 图片会尽量转换为 Hydro 常用格式，例如：
 
@@ -121,6 +139,13 @@ p2h convert example/polygon-contest-package/contest-56961.zip \
 
 `--run-doall` 会执行 contest 包中的 `doall.sh` 及相关脚本。
 请仅对**可信来源**的输入包启用该选项，避免对不受信任压缩包直接执行脚本。
+
+执行前会对脚本依赖做预检查（例如 `wine`、`java`、`javac` 等），行为由 `--missing-env` 控制：
+- `warn`（默认）：告警后继续执行（适合本地环境可能存在特殊路径/包装器的情况）
+- `ask`：先询问是否继续
+- `error`：缺依赖即直接失败
+
+注意：该预检查是“静态扫描提示”，并不能覆盖所有 shell 动态分支；最终仍以实际执行结果为准。
 
 ## 8. 常见错误
 
