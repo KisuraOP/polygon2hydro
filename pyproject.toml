@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polygon2hydro"
+version = "0.1.0"
+description = "Convert Polygon contest package to Hydro problem packages"
+requires-python = ">=3.10"
+authors = [{ name = "p2h" }]
+
+[project.scripts]
+p2h = "p2h.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
