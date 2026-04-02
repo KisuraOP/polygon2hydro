@@ -76,6 +76,7 @@ class TestCliMain(unittest.TestCase):
         self.assertEqual(captured["only_slugs"], ["a", "b", "c"])
         self.assertEqual(captured["run_doall"], False)
         self.assertEqual(captured["verbose"], True)
+        self.assertIn("p2h version: 0.1.0", out.getvalue())
         self.assertIn("done: total=1 success=1 failed=0", out.getvalue())
 
     def test_main_returns_error_code_when_failed(self) -> None:
@@ -89,6 +90,7 @@ class TestCliMain(unittest.TestCase):
                 code = cli.main(["convert", "contest.zip", "-o", "out", "--pid-start", "P1000"])
 
         self.assertEqual(code, 1)
+        self.assertIn("p2h version: 0.1.0", out.getvalue())
         self.assertIn("done: total=1 success=0 failed=1", err.getvalue())
         self.assertIn("- x: bad", err.getvalue())
 

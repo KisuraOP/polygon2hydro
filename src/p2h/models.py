@@ -19,3 +19,6 @@ class ProblemData:
     statement_md: str
     tests: list[TestCase] = field(default_factory=list)
     additional_files: list[tuple[str, bytes]] = field(default_factory=list)
+    testdata_files: list[tuple[str, bytes]] = field(default_factory=list)
+    is_interactive: bool = False
+    interactor_name: str | None = None

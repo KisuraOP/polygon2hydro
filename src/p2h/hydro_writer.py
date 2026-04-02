@@ -18,8 +18,7 @@ def write_problem_zip(
     tags: list[str],
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    zip_name = _safe_filename(problem.title or problem.slug) + ".zip"
-    zip_path = output_dir / zip_name
+    zip_path = _next_available_zip_path(output_dir, _safe_filename(problem.title or problem.slug))
 
     with tempfile.TemporaryDirectory(prefix="p2h-") as td:
         root = Path(td) / str(local_id)
@@ -27,12 +26,27 @@ def write_problem_zip(
 
         (root / "problem.yaml").write_text(_build_problem_yaml(pid, owner, problem.title, tags), encoding="utf-8")
         (root / "problem_zh.md").write_text(problem.statement_md, encoding="utf-8")
-        (root / "testdata" / "config.yaml").write_text(_build_config_yaml(problem.time_ms, problem.memory_mb), encoding="utf-8")
+        (root / "testdata" / "config.yaml").write_text(
+            _build_config_yaml(
+                problem.time_ms,
+                problem.memory_mb,
+                is_interactive=problem.is_interactive,
+                interactor_name=problem.interactor_name,
+            ),
+            encoding="utf-8",
+        )
 
         for case in problem.tests:
             idx = f"{case.index:02d}"
             (root / "testdata" / f"tests{idx}.in").write_bytes(case.input_data)
             (root / "testdata" / f"tests{idx}.out").write_bytes(case.output_data)
+
+        if problem.testdata_files:
+            for name, data in problem.testdata_files:
+                target = root / "testdata" / name
+                if target.exists():
+                    raise ValueError(f"testdata file collision: {name}")
+                target.write_bytes(data)
 
         if problem.additional_files:
             add_dir = root / "additional_file"
@@ -63,8 +77,18 @@ def _build_problem_yaml(pid: str, owner: int, title: str, tags: list[str]) -> st
     return "\n".join(lines)
 
 
-def _build_config_yaml(time_ms: int | None, memory_mb: int | None) -> str:
-    lines = ["type: default"]
+def _build_config_yaml(
+    time_ms: int | None,
+    memory_mb: int | None,
+    *,
+    is_interactive: bool,
+    interactor_name: str | None,
+) -> str:
+    lines = ["type: interactive" if is_interactive else "type: default"]
+    if is_interactive:
+        if not interactor_name:
+            raise ValueError("interactive problem missing interactor source filename")
+        lines.append(f"interactor: {interactor_name}")
     if time_ms is not None:
         lines.append(f"time: {time_ms}ms")
     if memory_mb is not None:
@@ -72,6 +96,19 @@ def _build_config_yaml(time_ms: int | None, memory_mb: int | None) -> str:
     lines.append("subtasks: []")
     lines.append("")
     return "\n".join(lines)
+
+
+def _next_available_zip_path(output_dir: Path, base_name: str) -> Path:
+    first = output_dir / f"{base_name}.zip"
+    if not first.exists():
+        return first
+
+    i = 2
+    while True:
+        candidate = output_dir / f"{base_name} ({i}).zip"
+        if not candidate.exists():
+            return candidate
+        i += 1
 
 
 def _safe_filename(name: str) -> str:

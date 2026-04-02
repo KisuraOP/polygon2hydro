@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from p2h.hydro_writer import write_problem_zip
 from p2h.polygon_reader import list_problem_slugs_from_names, read_problem
@@ -39,10 +41,16 @@ def convert_contest(
 
     with tempfile.TemporaryDirectory(prefix="p2h-contest-") as td:
         work_root = Path(td)
-        with zipfile.ZipFile(contest_zip) as zf:
-            names = zf.namelist()
-            zf.extractall(work_root)
-            all_slugs = list_problem_slugs_from_names(names)
+        try:
+            names = _safe_extract_contest_zip(contest_zip, work_root)
+        except Exception as exc:
+            return ConvertSummary(
+                total=0,
+                success=0,
+                failed=0,
+                errors=[f"invalid contest zip: {exc}"],
+            )
+        all_slugs = list_problem_slugs_from_names(names)
 
         slugs = all_slugs
         if only_slugs:
@@ -57,20 +65,39 @@ def convert_contest(
                 )
             slugs = only_slugs
 
+        total = len(slugs)
+        start_pid = f"{pid_prefix}{pid_start_num:0{pid_width}d}"
+        print(
+            f"start: total={total} output={output_dir} run_doall={'yes' if run_doall else 'no'} pid_start={start_pid}"
+        )
+
         if run_doall:
+            missing_tools = _detect_missing_doall_tools(work_root, slugs)
+            if missing_tools:
+                missing_text = ", ".join(missing_tools)
+                return ConvertSummary(
+                    total=total,
+                    success=0,
+                    failed=total,
+                    errors=[
+                        "missing environment tools for doall: "
+                        f"{missing_text}; install them or re-run with --no-run-doall"
+                    ],
+                )
             try:
                 _run_doall_for_all(work_root, slugs, verbose=verbose)
             except Exception as exc:
                 return ConvertSummary(
-                    total=len(slugs),
+                    total=total,
                     success=0,
-                    failed=len(slugs),
+                    failed=total,
                     errors=[f"doall failed: {exc}"],
                 )
 
         for idx, slug in enumerate(slugs, start=1):
             pid_num = pid_start_num + idx - 1
             pid = f"{pid_prefix}{pid_num:0{pid_width}d}"
+            print(f"[{idx}/{total}] {slug} (pid={pid})")
             try:
                 problem = read_problem(work_root, slug, verbose=verbose)
                 out_path = write_problem_zip(
@@ -82,15 +109,129 @@ def convert_contest(
                     tags=tags,
                 )
                 success += 1
-                if verbose:
-                    print(f"[{slug}] -> {out_path}")
+                print(f"[{idx}/{total}] OK {slug} -> {out_path}")
             except Exception as exc:
                 errors.append(f"{slug}: {exc}")
-                if verbose:
-                    print(f"[{slug}] ERROR: {exc}")
+                print(f"[{idx}/{total}] ERROR {slug}: {exc}")
 
     total = len(slugs)
     return ConvertSummary(total=total, success=success, failed=total - success, errors=errors)
+
+
+def _safe_extract_contest_zip(contest_zip: Path, work_root: Path) -> list[str]:
+    work_root_resolved = work_root.resolve()
+    with zipfile.ZipFile(contest_zip) as zf:
+        names = zf.namelist()
+        for info in zf.infolist():
+            raw_name = info.filename
+            rel_path = PurePosixPath(raw_name)
+
+            if rel_path.is_absolute():
+                raise ValueError(f"zip contains absolute path: {raw_name}")
+
+            if any(part in {"", ".", ".."} for part in rel_path.parts):
+                raise ValueError(f"zip contains unsafe path: {raw_name}")
+
+            target = work_root / Path(*rel_path.parts)
+            target_resolved = target.resolve()
+            if target_resolved != work_root_resolved and work_root_resolved not in target_resolved.parents:
+                raise ValueError(f"zip path escapes workspace: {raw_name}")
+
+            if info.is_dir() or raw_name.endswith("/"):
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info, "r") as src, target.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+
+        return names
+
+
+def _detect_missing_doall_tools(work_root: Path, slugs: list[str]) -> list[str]:
+    tools: set[str] = set()
+
+    for slug in slugs:
+        problem_root = work_root / "problems" / slug
+        _collect_tools_from_script(problem_root / "doall.sh", tools)
+
+        scripts_dir = problem_root / "scripts"
+        if scripts_dir.exists():
+            for path in scripts_dir.rglob("*.sh"):
+                if path.is_file():
+                    _collect_tools_from_script(path, tools)
+
+    missing = [t for t in sorted(tools) if shutil.which(t) is None]
+    return missing
+
+
+def _collect_tools_from_script(script_path: Path, tools: set[str]) -> None:
+    if not script_path.exists() or not script_path.is_file():
+        return
+
+    text = script_path.read_text(encoding="utf-8", errors="ignore")
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        if stripped.startswith("wine "):
+            tools.add("wine")
+        if stripped.startswith("java ") or " java " in f" {stripped} ":
+            tools.add("java")
+        if stripped.startswith("javac ") or " javac " in f" {stripped} ":
+            tools.add("javac")
+
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_+.-]*)\b", stripped)
+        if not m:
+            continue
+        cmd = m.group(1)
+
+        if cmd in {
+            "if",
+            "then",
+            "fi",
+            "for",
+            "do",
+            "done",
+            "case",
+            "esac",
+            "while",
+            "until",
+            "function",
+            "local",
+            "export",
+            "unset",
+            "readonly",
+            "eval",
+            "echo",
+            "read",
+            "rm",
+            "mv",
+            "cp",
+            "mkdir",
+            "cd",
+            "test",
+            "[",
+            "true",
+            "false",
+            "exit",
+            "return",
+            "set",
+            "shift",
+            "source",
+            ".",
+            "[",
+        }:
+            continue
+
+        if cmd.startswith("scripts/"):
+            continue
+
+        if cmd in {"bash", "sh"}:
+            continue
+
+        tools.add(cmd)
 
 
 def _run_doall_for_all(work_root: Path, slugs: list[str], *, verbose: bool) -> None:

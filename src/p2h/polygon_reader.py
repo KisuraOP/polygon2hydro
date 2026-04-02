@@ -28,13 +28,15 @@ def read_problem(work_root: Path, slug: str, *, verbose: bool = False) -> Proble
 
     title = _extract_title(root) or slug
     time_ms, memory_mb = _extract_limits(root)
-    statement_md, statement_dir = _extract_statement_markdown(base, root)
+    is_interactive, interactor_name = _extract_interactive_meta(root)
+    statement_md, statement_dir = _extract_statement_markdown(base, root, is_interactive=is_interactive)
     tests = _extract_tests(base, slug)
     additional = _extract_additional_files(base, statement_dir)
+    testdata_files = _extract_testdata_files(base, root, slug)
 
     if verbose:
         print(
-            f"[{slug}] title={title} tests={len(tests)} additional={len(additional)} "
+            f"[{slug}] title={title} interactive={is_interactive} tests={len(tests)} additional={len(additional)} testdata_files={len(testdata_files)} "
             f"time={time_ms}ms memory={memory_mb}MB"
         )
 
@@ -46,6 +48,9 @@ def read_problem(work_root: Path, slug: str, *, verbose: bool = False) -> Proble
         statement_md=statement_md,
         tests=tests,
         additional_files=additional,
+        testdata_files=testdata_files,
+        is_interactive=is_interactive,
+        interactor_name=interactor_name,
     )
 
 
@@ -73,10 +78,25 @@ def _extract_limits(root: ET.Element) -> tuple[int | None, int | None]:
     return time_ms, memory_mb
 
 
-def _extract_statement_markdown(base: Path, root: ET.Element) -> tuple[str, Path | None]:
+def _extract_interactive_meta(root: ET.Element) -> tuple[bool, str | None]:
+    interactor = root.find("./assets/interactor")
+    if interactor is None:
+        return False, None
+
+    source = interactor.find("source")
+    if source is None:
+        return True, None
+
+    rel = (source.attrib.get("path") or "").strip()
+    if not rel:
+        return True, None
+    return True, PurePosixPath(rel).name
+
+
+def _extract_statement_markdown(base: Path, root: ET.Element, *, is_interactive: bool) -> tuple[str, Path | None]:
     sections_dir = base / "statement-sections" / "chinese"
     if sections_dir.exists():
-        md = _sections_to_markdown(sections_dir)
+        md = _sections_to_markdown(sections_dir, is_interactive=is_interactive)
         if md.strip():
             return md, sections_dir
 
@@ -111,8 +131,9 @@ def _extract_statement_markdown(base: Path, root: ET.Element) -> tuple[str, Path
     return "# Description\n\n(Statement not found)\n", None
 
 
-def _sections_to_markdown(sections_dir: Path) -> str:
+def _sections_to_markdown(sections_dir: Path, *, is_interactive: bool) -> str:
     legend = _read_tex_file(sections_dir / "legend.tex")
+    interaction = _read_tex_file(sections_dir / "interaction.tex")
     input_text = _read_tex_file(sections_dir / "input.tex")
     output_text = _read_tex_file(sections_dir / "output.tex")
     notes = _read_tex_file(sections_dir / "notes.tex")
@@ -120,9 +141,13 @@ def _sections_to_markdown(sections_dir: Path) -> str:
     lines: list[str] = []
     lines.extend(["# Description", _tex_block_to_markdown(legend) if legend else "(No description provided)", ""])
 
-    lines.extend(["# Format", ""])
-    lines.extend(["## Input", _tex_block_to_markdown(input_text) if input_text else "(No input format provided)", ""])
-    lines.extend(["## Output", _tex_block_to_markdown(output_text) if output_text else "(No output format provided)", ""])
+    if is_interactive or interaction:
+        lines.extend(["# Interaction", _tex_block_to_markdown(interaction) if interaction else "(No interaction provided)", ""])
+    else:
+        lines.extend(["# Format", ""])
+        lines.extend(["## Input", _tex_block_to_markdown(input_text) if input_text else "(No input format provided)", ""])
+        lines.extend(["## Output", _tex_block_to_markdown(output_text) if output_text else "(No output format provided)", ""])
+
 
     example_indices = sorted({
         m.group(1)
@@ -394,5 +419,42 @@ def _extract_additional_files(base: Path, statement_dir: Path | None) -> list[tu
                 continue
             rel = path.relative_to(attach_dir).as_posix()
             out.setdefault(rel, path.read_bytes())
+
+    return sorted(out.items(), key=lambda x: x[0])
+
+
+def _extract_testdata_files(base: Path, root: ET.Element, slug: str) -> list[tuple[str, bytes]]:
+    out: dict[str, bytes] = {}
+
+    def _add_rel_path(rel: str) -> None:
+        rel_norm = PurePosixPath(rel).as_posix()
+        path = base / PurePosixPath(rel_norm)
+        if not path.exists() or not path.is_file():
+            raise ValueError(f"{slug}: declared testdata file not found: {rel_norm}")
+        flat_name = PurePosixPath(rel_norm).name
+        if not flat_name:
+            raise ValueError(f"{slug}: invalid declared testdata file path: {rel_norm}")
+        if flat_name in out:
+            raise ValueError(f"{slug}: testdata filename collision after flatten: {flat_name}")
+        out[flat_name] = path.read_bytes()
+
+    def _declared_source_path(node: ET.Element) -> str:
+        direct = (node.attrib.get("path") or "").strip()
+        if direct:
+            return direct
+        source = node.find("source")
+        if source is None:
+            return ""
+        return (source.attrib.get("path") or "").strip()
+
+    for exe in root.findall("./files/executables/executable"):
+        rel = _declared_source_path(exe)
+        if rel:
+            _add_rel_path(rel)
+
+    for sol in root.findall("./assets/solutions/solution"):
+        rel = _declared_source_path(sol)
+        if rel:
+            _add_rel_path(rel)
 
     return sorted(out.items(), key=lambda x: x[0])

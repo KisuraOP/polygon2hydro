@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import stat
 import sys
@@ -14,7 +16,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from p2h.convert import _make_scripts_executable, convert_contest
+from p2h.convert import _make_scripts_executable, _safe_extract_contest_zip, convert_contest
 from p2h.models import ProblemData, TestCase
 
 
@@ -40,6 +42,55 @@ def _build_minimal_contest_zip(path: Path, slugs: list[str]) -> None:
 
 
 class TestConvert(unittest.TestCase):
+    def test_safe_extract_contest_zip_blocks_parent_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            bad_zip = Path(td) / "bad.zip"
+            with zipfile.ZipFile(bad_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("../evil.txt", "boom")
+
+            with tempfile.TemporaryDirectory() as out_td:
+                with self.assertRaises(ValueError) as cm:
+                    _safe_extract_contest_zip(bad_zip, Path(out_td))
+                self.assertIn("unsafe path", str(cm.exception))
+
+    def test_convert_logs_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            contest_zip = Path(td) / "contest.zip"
+            _build_minimal_contest_zip(contest_zip, ["a", "b"])
+
+            fake_problem = ProblemData(
+                slug="a",
+                title="A",
+                time_ms=1000,
+                memory_mb=256,
+                statement_md="# Description\n",
+                tests=[TestCase(index=1, input_data=b"1\n", output_data=b"1\n")],
+                additional_files=[],
+            )
+
+            with mock.patch("p2h.convert.read_problem", return_value=fake_problem), mock.patch(
+                "p2h.convert.write_problem_zip", return_value=Path(td) / "out.zip"
+            ):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    convert_contest(
+                        contest_zip=contest_zip,
+                        output_dir=Path(td) / "out",
+                        pid_prefix="P",
+                        pid_start_num=1000,
+                        pid_width=4,
+                        owner=1,
+                        tags=[],
+                        run_doall=False,
+                    )
+                text = out.getvalue()
+
+            self.assertIn("start: total=2", text)
+            self.assertIn("[1/2] a (pid=P1000)", text)
+            self.assertIn("[2/2] b (pid=P1001)", text)
+            self.assertIn("[1/2] OK a ->", text)
+            self.assertIn("[2/2] OK b ->", text)
+
     def test_unknown_only_slug_returns_error(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             contest_zip = Path(td) / "contest.zip"

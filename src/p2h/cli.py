@@ -5,6 +5,7 @@ import re
 import sys
 from pathlib import Path
 
+from p2h import __version__
 from p2h.convert import convert_contest
 
 
@@ -56,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    print(f"p2h version: {__version__}")
 
     if args.command == "convert":
         summary = convert_contest(
