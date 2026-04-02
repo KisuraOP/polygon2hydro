@@ -16,7 +16,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from p2h.convert import _make_scripts_executable, _safe_extract_contest_zip, convert_contest
+from p2h.convert import _confirm_continue_after_missing_env, _make_scripts_executable, _safe_extract_contest_zip, convert_contest
 from p2h.models import ProblemData, TestCase
 
 
@@ -90,6 +90,113 @@ class TestConvert(unittest.TestCase):
             self.assertIn("[2/2] b (pid=P1001)", text)
             self.assertIn("[1/2] OK a ->", text)
             self.assertIn("[2/2] OK b ->", text)
+
+    def test_doall_tool_detection_ignores_shell_words(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            contest_zip = Path(td) / "contest.zip"
+            _build_minimal_contest_zip(contest_zip, ["a"])
+            with zipfile.ZipFile(contest_zip, "a", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr(
+                    "problems/a/doall.sh",
+                    "#!/usr/bin/env bash\n"
+                    "indices=(1 2)\n"
+                    "paths=(tests/01 tests/02)\n"
+                    "for i in \"${indices[@]}\"; do\n"
+                    "  scripts/gen-answer.sh \"${paths[$i]}\"\n"
+                    "done\n",
+                )
+
+            with mock.patch("shutil.which", return_value="/usr/bin/fake"), mock.patch(
+                "p2h.convert._run_doall_for_all"
+            ):
+                summary = convert_contest(
+                    contest_zip=contest_zip,
+                    output_dir=Path(td) / "out",
+                    pid_prefix="P",
+                    pid_start_num=1000,
+                    pid_width=4,
+                    owner=1,
+                    tags=[],
+                    run_doall=True,
+                )
+
+            self.assertFalse(any("missing environment tools for doall" in e for e in summary.errors))
+
+    def test_missing_env_policy_error_aborts(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            contest_zip = Path(td) / "contest.zip"
+            _build_minimal_contest_zip(contest_zip, ["a"])
+            with zipfile.ZipFile(contest_zip, "a", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("problems/a/doall.sh", "#!/usr/bin/env bash\nwine files/gen.exe\n")
+
+            with mock.patch("shutil.which", return_value=None):
+                summary = convert_contest(
+                    contest_zip=contest_zip,
+                    output_dir=Path(td) / "out",
+                    pid_prefix="P",
+                    pid_start_num=1000,
+                    pid_width=4,
+                    owner=1,
+                    tags=[],
+                    run_doall=True,
+                    missing_env_policy="error",
+                )
+
+            self.assertEqual(summary.failed, 1)
+            self.assertTrue(any("abort due to --missing-env error" in e for e in summary.errors))
+
+    def test_missing_env_policy_ask_allows_continue(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            contest_zip = Path(td) / "contest.zip"
+            _build_minimal_contest_zip(contest_zip, ["a"])
+            with zipfile.ZipFile(contest_zip, "a", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("problems/a/doall.sh", "#!/usr/bin/env bash\nwine files/gen.exe\n")
+
+            with mock.patch("shutil.which", return_value=None), mock.patch(
+                "builtins.input", return_value="y"
+            ), mock.patch("p2h.convert._run_doall_for_all"):
+                summary = convert_contest(
+                    contest_zip=contest_zip,
+                    output_dir=Path(td) / "out",
+                    pid_prefix="P",
+                    pid_start_num=1000,
+                    pid_width=4,
+                    owner=1,
+                    tags=[],
+                    run_doall=True,
+                    missing_env_policy="ask",
+                )
+
+            self.assertEqual(summary.failed, 0)
+
+    def test_missing_env_policy_ask_aborts_on_no(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            contest_zip = Path(td) / "contest.zip"
+            _build_minimal_contest_zip(contest_zip, ["a"])
+            with zipfile.ZipFile(contest_zip, "a", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("problems/a/doall.sh", "#!/usr/bin/env bash\nwine files/gen.exe\n")
+
+            with mock.patch("shutil.which", return_value=None), mock.patch("builtins.input", return_value="n"):
+                summary = convert_contest(
+                    contest_zip=contest_zip,
+                    output_dir=Path(td) / "out",
+                    pid_prefix="P",
+                    pid_start_num=1000,
+                    pid_width=4,
+                    owner=1,
+                    tags=[],
+                    run_doall=True,
+                    missing_env_policy="ask",
+                )
+
+            self.assertEqual(summary.failed, 1)
+            self.assertTrue(any("user aborted" in e for e in summary.errors))
+
+    def test_confirm_continue_after_missing_env(self) -> None:
+        with mock.patch("builtins.input", return_value="yes"):
+            self.assertTrue(_confirm_continue_after_missing_env(["wine"]))
+        with mock.patch("builtins.input", return_value="N"):
+            self.assertFalse(_confirm_continue_after_missing_env(["wine"]))
 
     def test_unknown_only_slug_returns_error(self) -> None:
         with tempfile.TemporaryDirectory() as td:

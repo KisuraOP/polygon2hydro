@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
@@ -33,6 +35,7 @@ def convert_contest(
     only_slugs: list[str] | None = None,
     run_doall: bool = True,
     verbose: bool = False,
+    missing_env_policy: str = "warn",
 ) -> ConvertSummary:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -75,15 +78,28 @@ def convert_contest(
             missing_tools = _detect_missing_doall_tools(work_root, slugs)
             if missing_tools:
                 missing_text = ", ".join(missing_tools)
-                return ConvertSummary(
-                    total=total,
-                    success=0,
-                    failed=total,
-                    errors=[
-                        "missing environment tools for doall: "
-                        f"{missing_text}; install them or re-run with --no-run-doall"
-                    ],
+                msg = (
+                    "missing environment tools for doall (precheck warning): "
+                    f"{missing_text}; doall may still work in special environments"
                 )
+                if missing_env_policy == "error":
+                    return ConvertSummary(
+                        total=total,
+                        success=0,
+                        failed=total,
+                        errors=[msg + "; abort due to --missing-env error"],
+                    )
+
+                print(f"warning: {msg}", file=sys.stderr)
+                if missing_env_policy == "ask":
+                    if not _confirm_continue_after_missing_env(missing_tools):
+                        return ConvertSummary(
+                            total=total,
+                            success=0,
+                            failed=total,
+                            errors=["user aborted after missing environment warning"],
+                        )
+
             try:
                 _run_doall_for_all(work_root, slugs, verbose=verbose)
             except Exception as exc:
@@ -161,13 +177,48 @@ def _detect_missing_doall_tools(work_root: Path, slugs: list[str]) -> list[str]:
                 if path.is_file():
                     _collect_tools_from_script(path, tools)
 
-    missing = [t for t in sorted(tools) if shutil.which(t) is None]
-    return missing
+    return [t for t in sorted(tools) if shutil.which(t) is None]
 
 
 def _collect_tools_from_script(script_path: Path, tools: set[str]) -> None:
     if not script_path.exists() or not script_path.is_file():
         return
+
+    shell_keywords = {
+        "if",
+        "then",
+        "fi",
+        "for",
+        "do",
+        "done",
+        "case",
+        "esac",
+        "while",
+        "until",
+        "function",
+        "local",
+        "export",
+        "unset",
+        "readonly",
+        "eval",
+        "echo",
+        "read",
+        "rm",
+        "mv",
+        "cp",
+        "mkdir",
+        "cd",
+        "test",
+        "true",
+        "false",
+        "exit",
+        "return",
+        "set",
+        "shift",
+        "source",
+        ".",
+        "in",
+    }
 
     text = script_path.read_text(encoding="utf-8", errors="ignore")
     for line in text.splitlines():
@@ -175,63 +226,47 @@ def _collect_tools_from_script(script_path: Path, tools: set[str]) -> None:
         if not stripped or stripped.startswith("#"):
             continue
 
-        if stripped.startswith("wine "):
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", stripped):
+            continue
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*\(\)\s*\{?", stripped):
+            continue
+
+        if re.search(r"(^|\s)wine\s", stripped):
             tools.add("wine")
-        if stripped.startswith("java ") or " java " in f" {stripped} ":
+        if re.search(r"(^|\s)java\s", stripped):
             tools.add("java")
-        if stripped.startswith("javac ") or " javac " in f" {stripped} ":
+        if re.search(r"(^|\s)javac\s", stripped):
             tools.add("javac")
 
-        m = re.match(r"^([A-Za-z_][A-Za-z0-9_+.-]*)\b", stripped)
-        if not m:
-            continue
-        cmd = m.group(1)
-
-        if cmd in {
-            "if",
-            "then",
-            "fi",
-            "for",
-            "do",
-            "done",
-            "case",
-            "esac",
-            "while",
-            "until",
-            "function",
-            "local",
-            "export",
-            "unset",
-            "readonly",
-            "eval",
-            "echo",
-            "read",
-            "rm",
-            "mv",
-            "cp",
-            "mkdir",
-            "cd",
-            "test",
-            "[",
-            "true",
-            "false",
-            "exit",
-            "return",
-            "set",
-            "shift",
-            "source",
-            ".",
-            "[",
-        }:
+        try:
+            first = shlex.split(stripped, posix=True)[0]
+        except Exception:
             continue
 
-        if cmd.startswith("scripts/"):
+        if first in shell_keywords:
+            continue
+        if first in {"bash", "sh"}:
+            continue
+        if first.startswith("scripts/"):
+            continue
+        if first.startswith("$"):
+            continue
+        if first.startswith("./") or first.startswith("../"):
             continue
 
-        if cmd in {"bash", "sh"}:
-            continue
+        tools.add(first)
 
-        tools.add(cmd)
+
+def _confirm_continue_after_missing_env(missing_tools: list[str]) -> bool:
+    prompt = (
+        "missing environment precheck warning for doall: "
+        f"{', '.join(missing_tools)}. Continue anyway? [y/N]: "
+    )
+    try:
+        ans = input(prompt).strip().lower()
+    except EOFError:
+        return False
+    return ans in {"y", "yes"}
 
 
 def _run_doall_for_all(work_root: Path, slugs: list[str], *, verbose: bool) -> None:

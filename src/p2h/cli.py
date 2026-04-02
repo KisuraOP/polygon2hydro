@@ -50,6 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_convert.add_argument("--run-doall", dest="run_doall", action="store_true", default=True, help="run each problem's doall.sh to generate tests/answers (default: enabled)")
     p_convert.add_argument("--no-run-doall", dest="run_doall", action="store_false", help="skip doall execution and use pre-generated tests only")
     p_convert.add_argument("--verbose", action="store_true")
+    p_convert.add_argument(
+        "--missing-env",
+        choices=["warn", "ask", "error"],
+        default="warn",
+        help="behavior when doall precheck finds missing tools: warn (default), ask, or error",
+    )
 
     return parser
 
@@ -72,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
             only_slugs=_flatten_only(args.only),
             run_doall=args.run_doall,
             verbose=args.verbose,
+            missing_env_policy=args.missing_env,
         )
         print(
             f"done: total={summary.total} success={summary.success} failed={summary.failed}",

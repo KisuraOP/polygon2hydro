@@ -76,8 +76,36 @@ class TestCliMain(unittest.TestCase):
         self.assertEqual(captured["only_slugs"], ["a", "b", "c"])
         self.assertEqual(captured["run_doall"], False)
         self.assertEqual(captured["verbose"], True)
+        self.assertEqual(captured["missing_env_policy"], "warn")
         self.assertIn("p2h version: 0.1.0", out.getvalue())
         self.assertIn("done: total=1 success=1 failed=0", out.getvalue())
+
+    def test_main_passes_missing_env_choice(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_convert(**kwargs: object) -> ConvertSummary:
+            captured.update(kwargs)
+            return ConvertSummary(total=1, success=1, failed=0)
+
+        with mock.patch("p2h.cli.convert_contest", side_effect=fake_convert):
+            out = io.StringIO()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(
+                    [
+                        "convert",
+                        "contest.zip",
+                        "-o",
+                        "out",
+                        "--pid-start",
+                        "P1000",
+                        "--missing-env",
+                        "ask",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["missing_env_policy"], "ask")
 
     def test_main_returns_error_code_when_failed(self) -> None:
         with mock.patch(
