@@ -19,21 +19,32 @@ def list_problem_slugs_from_names(names: list[str]) -> list[str]:
     return sorted(slugs)
 
 
-def read_problem(work_root: Path, slug: str, *, verbose: bool = False) -> ProblemData:
+def read_problem(
+    work_root: Path,
+    slug: str,
+    *,
+    verbose: bool = False,
+    statement_language: str | None = None,
+) -> ProblemData:
     base = work_root / "problems" / slug
     xml_path = base / "problem.xml"
     if not xml_path.exists():
         raise ValueError(f"{slug}: missing problem.xml")
     root = ET.fromstring(xml_path.read_bytes())
 
-    title = _extract_title(root) or slug
+    title = _extract_title(root, statement_language=statement_language) or slug
     time_ms, memory_mb = _extract_limits(root)
     is_interactive, interactor_name = _extract_interactive_meta(root)
     checker_name = _extract_checker_name(root)
     if not is_interactive and not checker_name:
         raise ValueError(f"{slug}: missing checker source in problem.xml assets/checker")
 
-    statement_md, statement_dir = _extract_statement_markdown(base, root, is_interactive=is_interactive)
+    statement_md, statement_dir = _extract_statement_markdown(
+        base,
+        root,
+        is_interactive=is_interactive,
+        statement_language=statement_language,
+    )
     tests = _extract_tests(base, slug)
     additional = _extract_additional_files(base, statement_dir)
     testdata_files = _extract_testdata_files(base, root, slug, is_interactive=is_interactive)
@@ -59,7 +70,13 @@ def read_problem(work_root: Path, slug: str, *, verbose: bool = False) -> Proble
     )
 
 
-def _extract_title(root: ET.Element) -> str | None:
+def _language_priority(statement_language: str | None) -> tuple[str, ...]:
+    if statement_language == "english":
+        return ("english", "chinese")
+    return ("chinese", "english")
+
+
+def _extract_title(root: ET.Element, *, statement_language: str | None) -> str | None:
     names = root.find("names")
     if names is None:
         return None
@@ -69,7 +86,11 @@ def _extract_title(root: ET.Element) -> str | None:
         value = node.attrib.get("value", "").strip()
         if value:
             by_lang[lang] = value
-    return by_lang.get("chinese") or by_lang.get("english") or next(iter(by_lang.values()), None)
+
+    for lang in _language_priority(statement_language):
+        if by_lang.get(lang):
+            return by_lang[lang]
+    return next(iter(by_lang.values()), None)
 
 
 def _extract_limits(root: ET.Element) -> tuple[int | None, int | None]:
@@ -114,40 +135,48 @@ def _extract_checker_name(root: ET.Element) -> str | None:
     return PurePosixPath(rel).name or None
 
 
-def _extract_statement_markdown(base: Path, root: ET.Element, *, is_interactive: bool) -> tuple[str, Path | None]:
-    sections_dir = base / "statement-sections" / "chinese"
-    if sections_dir.exists():
-        md = _sections_to_markdown(sections_dir, is_interactive=is_interactive)
-        if md.strip():
-            return md, sections_dir
+def _extract_statement_markdown(
+    base: Path,
+    root: ET.Element,
+    *,
+    is_interactive: bool,
+    statement_language: str | None,
+) -> tuple[str, Path | None]:
+    for lang in _language_priority(statement_language):
+        sections_dir = base / "statement-sections" / lang
+        if sections_dir.exists():
+            md = _sections_to_markdown(sections_dir, is_interactive=is_interactive)
+            if md.strip():
+                return md, sections_dir
 
     statements = root.find("statements")
     if statements is None:
         return "# Description\n\n(Empty statement)\n", None
 
-    html_rel = None
-    tex_rel = None
-    for st in statements.findall("statement"):
-        if st.attrib.get("language") != "chinese":
-            continue
-        stype = st.attrib.get("type", "")
-        rel = st.attrib.get("path")
-        if not rel:
-            continue
-        if stype == "text/html":
-            html_rel = rel
-        elif stype == "application/x-tex":
-            tex_rel = rel
+    for lang in _language_priority(statement_language):
+        html_rel = None
+        tex_rel = None
+        for st in statements.findall("statement"):
+            if st.attrib.get("language") != lang:
+                continue
+            stype = st.attrib.get("type", "")
+            rel = st.attrib.get("path")
+            if not rel:
+                continue
+            if stype == "text/html":
+                html_rel = rel
+            elif stype == "application/x-tex":
+                tex_rel = rel
 
-    if html_rel:
-        html_path = base / PurePosixPath(html_rel)
-        if html_path.exists():
-            return _html_to_markdown(html_path.read_text(encoding="utf-8", errors="ignore")), html_path.parent
+        if html_rel:
+            html_path = base / PurePosixPath(html_rel)
+            if html_path.exists():
+                return _html_to_markdown(html_path.read_text(encoding="utf-8", errors="ignore")), html_path.parent
 
-    if tex_rel:
-        tex_path = base / PurePosixPath(tex_rel)
-        if tex_path.exists():
-            return _tex_to_markdown(tex_path.read_text(encoding="utf-8", errors="ignore")), tex_path.parent
+        if tex_rel:
+            tex_path = base / PurePosixPath(tex_rel)
+            if tex_path.exists():
+                return _tex_to_markdown(tex_path.read_text(encoding="utf-8", errors="ignore")), tex_path.parent
 
     return "# Description\n\n(Statement not found)\n", None
 

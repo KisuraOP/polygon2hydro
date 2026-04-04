@@ -14,6 +14,137 @@ from p2h import polygon_reader as pr
 
 
 class TestPolygonReader(unittest.TestCase):
+    def test_extract_title_respects_statement_language(self) -> None:
+        root = pr.ET.fromstring(
+            """
+            <problem>
+              <names>
+                <name language="chinese" value="中文标题"/>
+                <name language="english" value="English Title"/>
+              </names>
+            </problem>
+            """
+        )
+        self.assertEqual(pr._extract_title(root, statement_language="chinese"), "中文标题")
+        self.assertEqual(pr._extract_title(root, statement_language="english"), "English Title")
+        self.assertEqual(pr._extract_title(root, statement_language=None), "中文标题")
+
+    def test_extract_statement_markdown_uses_english_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            zh = base / "statement-sections" / "chinese"
+            en = base / "statement-sections" / "english"
+            zh.mkdir(parents=True)
+            en.mkdir(parents=True)
+            (zh / "legend.tex").write_text("中文题面", encoding="utf-8")
+            (zh / "input.tex").write_text("中文输入", encoding="utf-8")
+            (zh / "output.tex").write_text("中文输出", encoding="utf-8")
+            (en / "legend.tex").write_text("English description", encoding="utf-8")
+            (en / "input.tex").write_text("Input format", encoding="utf-8")
+            (en / "output.tex").write_text("Output format", encoding="utf-8")
+
+            md, used_dir = pr._extract_statement_markdown(
+                base,
+                pr.ET.fromstring("<problem></problem>"),
+                is_interactive=False,
+                statement_language="english",
+            )
+            self.assertIn("English description", md)
+            self.assertNotIn("中文题面", md)
+            self.assertEqual(used_dir, en)
+
+    def test_extract_statement_markdown_falls_back_when_selected_language_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            zh = base / "statement-sections" / "chinese"
+            zh.mkdir(parents=True)
+            (zh / "legend.tex").write_text("中文题面", encoding="utf-8")
+            (zh / "input.tex").write_text("中文输入", encoding="utf-8")
+            (zh / "output.tex").write_text("中文输出", encoding="utf-8")
+
+            md, used_dir = pr._extract_statement_markdown(
+                base,
+                pr.ET.fromstring("<problem></problem>"),
+                is_interactive=False,
+                statement_language="english",
+            )
+            self.assertIn("中文题面", md)
+            self.assertEqual(used_dir, zh)
+
+    def test_extract_statement_markdown_uses_english_xml_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            zh_html = base / "statements" / "zh.html"
+            en_html = base / "statements" / "en.html"
+            zh_html.parent.mkdir(parents=True)
+            zh_html.write_text("<p>中文题面</p>", encoding="utf-8")
+            en_html.write_text("<p>English statement</p>", encoding="utf-8")
+
+            root = pr.ET.fromstring(
+                """
+                <problem>
+                  <statements>
+                    <statement language="chinese" type="text/html" path="statements/zh.html" />
+                    <statement language="english" type="text/html" path="statements/en.html" />
+                  </statements>
+                </problem>
+                """
+            )
+
+            md, used_dir = pr._extract_statement_markdown(
+                base,
+                root,
+                is_interactive=False,
+                statement_language="english",
+            )
+            self.assertIn("English statement", md)
+            self.assertNotIn("中文题面", md)
+            self.assertEqual(used_dir, en_html.parent)
+
+    def test_read_problem_respects_statement_language_for_title(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            slug = "lang-pref"
+            base = root / "problems" / slug
+            (base / "statement-sections" / "chinese").mkdir(parents=True)
+            (base / "statement-sections" / "english").mkdir(parents=True)
+            (base / "tests").mkdir(parents=True)
+            (base / "files").mkdir(parents=True)
+
+            (base / "problem.xml").write_text(
+                """
+                <problem>
+                  <names>
+                    <name language="chinese" value="中文标题"/>
+                    <name language="english" value="English Title"/>
+                  </names>
+                  <assets>
+                    <checker type="testlib">
+                      <source path="files/check.cpp"/>
+                    </checker>
+                  </assets>
+                </problem>
+                """,
+                encoding="utf-8",
+            )
+            (base / "statement-sections" / "chinese" / "legend.tex").write_text("中文题面", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "input.tex").write_text("中文输入", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "output.tex").write_text("中文输出", encoding="utf-8")
+            (base / "statement-sections" / "english" / "legend.tex").write_text("English statement", encoding="utf-8")
+            (base / "statement-sections" / "english" / "input.tex").write_text("Input format", encoding="utf-8")
+            (base / "statement-sections" / "english" / "output.tex").write_text("Output format", encoding="utf-8")
+            (base / "tests" / "1").write_bytes(b"1\n")
+            (base / "tests" / "1.a").write_bytes(b"2\n")
+            (base / "files" / "check.cpp").write_text("// checker", encoding="utf-8")
+
+            problem = pr.read_problem(root, slug, statement_language="english")
+            self.assertEqual(problem.title, "English Title")
+            self.assertIn("English statement", problem.statement_md)
+
+            problem_zh = pr.read_problem(root, slug, statement_language="chinese")
+            self.assertEqual(problem_zh.title, "中文标题")
+            self.assertIn("中文题面", problem_zh.statement_md)
+
     def test_list_problem_slugs(self) -> None:
         names = [
             "problems/a/problem.xml",
@@ -220,9 +351,103 @@ class TestPolygonReader(unittest.TestCase):
             (sections / "example.1").write_text("1\n", encoding="utf-8")
             (sections / "example.1.a").write_text("2\n", encoding="utf-8")
 
-            md, _ = pr._extract_statement_markdown(base, pr.ET.fromstring("<problem></problem>"), is_interactive=True)
+            md, _ = pr._extract_statement_markdown(
+                base,
+                pr.ET.fromstring("<problem></problem>"),
+                is_interactive=True,
+                statement_language=None,
+            )
             self.assertIn("# Interaction", md)
             self.assertNotIn("# Format", md)
+
+    def test_extract_statement_markdown_fallback_to_english_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            sections = base / "statement-sections" / "english"
+            sections.mkdir(parents=True)
+            (sections / "legend.tex").write_text("English description", encoding="utf-8")
+            (sections / "input.tex").write_text("Input format", encoding="utf-8")
+            (sections / "output.tex").write_text("Output format", encoding="utf-8")
+
+            md, used_dir = pr._extract_statement_markdown(
+                base,
+                pr.ET.fromstring("<problem></problem>"),
+                is_interactive=False,
+                statement_language=None,
+            )
+            self.assertIn("English description", md)
+            self.assertIn("# Format", md)
+            self.assertEqual(used_dir, sections)
+
+    def test_extract_statement_markdown_prefers_chinese_over_english_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            zh = base / "statement-sections" / "chinese"
+            en = base / "statement-sections" / "english"
+            zh.mkdir(parents=True)
+            en.mkdir(parents=True)
+            (zh / "legend.tex").write_text("中文题面", encoding="utf-8")
+            (zh / "input.tex").write_text("中文输入", encoding="utf-8")
+            (zh / "output.tex").write_text("中文输出", encoding="utf-8")
+            (en / "legend.tex").write_text("English description", encoding="utf-8")
+            (en / "input.tex").write_text("Input format", encoding="utf-8")
+            (en / "output.tex").write_text("Output format", encoding="utf-8")
+
+            md, used_dir = pr._extract_statement_markdown(
+                base,
+                pr.ET.fromstring("<problem></problem>"),
+                is_interactive=False,
+                statement_language=None,
+            )
+            self.assertIn("中文题面", md)
+            self.assertNotIn("English description", md)
+            self.assertEqual(used_dir, zh)
+
+    def test_extract_statement_markdown_fallback_to_english_xml_html(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            html_path = base / "statements" / "english.html"
+            html_path.parent.mkdir(parents=True)
+            html_path.write_text("<p>English only statement</p>", encoding="utf-8")
+
+            root = pr.ET.fromstring(
+                """
+                <problem>
+                  <statements>
+                    <statement language="english" type="text/html" path="statements/english.html" />
+                  </statements>
+                </problem>
+                """
+            )
+            md, used_dir = pr._extract_statement_markdown(
+                base,
+                root,
+                is_interactive=False,
+                statement_language=None,
+            )
+            self.assertIn("English only statement", md)
+            self.assertEqual(used_dir, html_path.parent)
+
+    def test_extract_additional_files_from_selected_english_statement_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            en = base / "statement-sections" / "english"
+            en.mkdir(parents=True)
+            (en / "legend.tex").write_text("English statement", encoding="utf-8")
+            (en / "figure.png").write_bytes(b"img")
+
+            md, used_dir = pr._extract_statement_markdown(
+                base,
+                pr.ET.fromstring("<problem></problem>"),
+                is_interactive=False,
+                statement_language=None,
+            )
+            files = pr._extract_additional_files(base, used_dir)
+            names = [n for n, _ in files]
+            self.assertIn("English statement", md)
+            self.assertEqual(used_dir, en)
+            self.assertIn("figure.png", names)
+            self.assertIn("legend.tex", names)
 
     def test_extract_tests_reindex_and_errors(self) -> None:
         with tempfile.TemporaryDirectory() as td:

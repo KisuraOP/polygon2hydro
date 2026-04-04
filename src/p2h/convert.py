@@ -10,6 +10,7 @@ import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from p2h.hydro_writer import write_problem_zip
 from p2h.polygon_reader import list_problem_slugs_from_names, read_problem
@@ -70,6 +71,7 @@ def convert_contest(
 
         total = len(slugs)
         start_pid = f"{pid_prefix}{pid_start_num:0{pid_width}d}"
+        statement_language = _detect_contest_statement_language(work_root)
         print(
             f"start: total={total} output={output_dir} run_doall={'yes' if run_doall else 'no'} pid_start={start_pid}"
         )
@@ -115,7 +117,7 @@ def convert_contest(
             pid = f"{pid_prefix}{pid_num:0{pid_width}d}"
             print(f"[{idx}/{total}] {slug} (pid={pid})")
             try:
-                problem = read_problem(work_root, slug, verbose=verbose)
+                problem = read_problem(work_root, slug, verbose=verbose, statement_language=statement_language)
                 out_path = write_problem_zip(
                     problem=problem,
                     output_dir=output_dir,
@@ -132,6 +134,18 @@ def convert_contest(
 
     total = len(slugs)
     return ConvertSummary(total=total, success=success, failed=total - success, errors=errors)
+
+
+def _detect_contest_statement_language(work_root: Path) -> Literal["chinese", "english"] | None:
+    statements_root = work_root / "statements"
+    if not statements_root.exists() or not statements_root.is_dir():
+        return None
+
+    if (statements_root / "chinese").exists():
+        return "chinese"
+    if (statements_root / "english").exists():
+        return "english"
+    return None
 
 
 def _safe_extract_contest_zip(contest_zip: Path, work_root: Path) -> list[str]:

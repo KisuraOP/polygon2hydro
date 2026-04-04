@@ -94,7 +94,14 @@ p2h convert example/polygon-contest-package/contest-56961.zip \
 
 ## 6. 题面转换说明
 
-当前题面转换优先使用 `statement-sections/chinese` 的结构化内容。
+当前题面语言由比赛级目录 `statements/` 决定：
+- 若存在 `statements/chinese`，则全比赛优先使用中文题面；
+- 若不存在中文但存在 `statements/english`，则全比赛使用英文题面；
+- 若中英都存在，仍优先中文。
+
+在选定语言下，优先使用 `statement-sections/<language>` 的结构化内容；若缺失则回退到 `problem.xml` 的 `statements` 条目。
+
+若比赛级 `statements/` 未提供可识别语言目录，则按兼容策略回退为“中文优先、英文次之”。
 
 传统题输出模板：
 - `# Description`

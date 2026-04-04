@@ -16,7 +16,13 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from p2h.convert import _confirm_continue_after_missing_env, _make_scripts_executable, _safe_extract_contest_zip, convert_contest
+from p2h.convert import (
+    _confirm_continue_after_missing_env,
+    _detect_contest_statement_language,
+    _make_scripts_executable,
+    _safe_extract_contest_zip,
+    convert_contest,
+)
 from p2h.models import ProblemData, TestCase
 
 
@@ -48,6 +54,121 @@ def _build_minimal_contest_zip(path: Path, slugs: list[str]) -> None:
 
 
 class TestConvert(unittest.TestCase):
+    def test_detect_contest_statement_language(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self.assertIsNone(_detect_contest_statement_language(root))
+
+            (root / "statements" / "english").mkdir(parents=True)
+            self.assertEqual(_detect_contest_statement_language(root), "english")
+
+            (root / "statements" / "chinese").mkdir(parents=True)
+            self.assertEqual(_detect_contest_statement_language(root), "chinese")
+
+    def test_convert_passes_statement_language_to_read_problem(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            contest_zip = Path(td) / "contest.zip"
+            _build_minimal_contest_zip(contest_zip, ["a"])
+            with zipfile.ZipFile(contest_zip, "a", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("statements/english/.keep", "")
+
+            fake_problem = ProblemData(
+                slug="a",
+                title="A",
+                time_ms=1000,
+                memory_mb=256,
+                statement_md="# Description\n",
+                tests=[TestCase(index=1, input_data=b"1\n", output_data=b"1\n")],
+                additional_files=[],
+                checker_name="check.cpp",
+            )
+
+            with mock.patch("p2h.convert.read_problem", return_value=fake_problem) as mocked_read, mock.patch(
+                "p2h.convert.write_problem_zip", return_value=Path(td) / "out.zip"
+            ):
+                convert_contest(
+                    contest_zip=contest_zip,
+                    output_dir=Path(td) / "out",
+                    pid_prefix="P",
+                    pid_start_num=1000,
+                    pid_width=4,
+                    owner=1,
+                    tags=[],
+                    run_doall=False,
+                )
+
+            kwargs = mocked_read.call_args.kwargs
+            self.assertEqual(kwargs["statement_language"], "english")
+
+    def test_convert_prefers_chinese_when_both_statement_dirs_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            contest_zip = Path(td) / "contest.zip"
+            _build_minimal_contest_zip(contest_zip, ["a"])
+            with zipfile.ZipFile(contest_zip, "a", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("statements/english/.keep", "")
+                zf.writestr("statements/chinese/.keep", "")
+
+            fake_problem = ProblemData(
+                slug="a",
+                title="A",
+                time_ms=1000,
+                memory_mb=256,
+                statement_md="# Description\n",
+                tests=[TestCase(index=1, input_data=b"1\n", output_data=b"1\n")],
+                additional_files=[],
+                checker_name="check.cpp",
+            )
+
+            with mock.patch("p2h.convert.read_problem", return_value=fake_problem) as mocked_read, mock.patch(
+                "p2h.convert.write_problem_zip", return_value=Path(td) / "out.zip"
+            ):
+                convert_contest(
+                    contest_zip=contest_zip,
+                    output_dir=Path(td) / "out",
+                    pid_prefix="P",
+                    pid_start_num=1000,
+                    pid_width=4,
+                    owner=1,
+                    tags=[],
+                    run_doall=False,
+                )
+
+            kwargs = mocked_read.call_args.kwargs
+            self.assertEqual(kwargs["statement_language"], "chinese")
+
+    def test_convert_uses_default_language_order_when_statements_dir_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            contest_zip = Path(td) / "contest.zip"
+            _build_minimal_contest_zip(contest_zip, ["a"])
+
+            fake_problem = ProblemData(
+                slug="a",
+                title="A",
+                time_ms=1000,
+                memory_mb=256,
+                statement_md="# Description\n",
+                tests=[TestCase(index=1, input_data=b"1\n", output_data=b"1\n")],
+                additional_files=[],
+                checker_name="check.cpp",
+            )
+
+            with mock.patch("p2h.convert.read_problem", return_value=fake_problem) as mocked_read, mock.patch(
+                "p2h.convert.write_problem_zip", return_value=Path(td) / "out.zip"
+            ):
+                convert_contest(
+                    contest_zip=contest_zip,
+                    output_dir=Path(td) / "out",
+                    pid_prefix="P",
+                    pid_start_num=1000,
+                    pid_width=4,
+                    owner=1,
+                    tags=[],
+                    run_doall=False,
+                )
+
+            kwargs = mocked_read.call_args.kwargs
+            self.assertIsNone(kwargs["statement_language"])
+
     def test_safe_extract_contest_zip_blocks_parent_escape(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             bad_zip = Path(td) / "bad.zip"
@@ -72,6 +193,7 @@ class TestConvert(unittest.TestCase):
                 statement_md="# Description\n",
                 tests=[TestCase(index=1, input_data=b"1\n", output_data=b"1\n")],
                 additional_files=[],
+                checker_name="check.cpp",
             )
 
             with mock.patch("p2h.convert.read_problem", return_value=fake_problem), mock.patch(
@@ -238,6 +360,7 @@ class TestConvert(unittest.TestCase):
                 statement_md="# Description\n",
                 tests=[TestCase(index=1, input_data=b"1\n", output_data=b"1\n")],
                 additional_files=[],
+                checker_name="check.cpp",
             )
 
             with mock.patch("p2h.convert.read_problem", return_value=fake_problem), mock.patch(
@@ -275,7 +398,7 @@ class TestConvert(unittest.TestCase):
             contest_zip = Path(td) / "contest.zip"
             _build_minimal_contest_zip(contest_zip, ["a", "b"])
 
-            def fake_read(root: Path, slug: str, *, verbose: bool = False) -> ProblemData:
+            def fake_read(root: Path, slug: str, *, verbose: bool = False, statement_language: str | None = None) -> ProblemData:
                 if slug == "b":
                     raise ValueError("boom")
                 return ProblemData(
