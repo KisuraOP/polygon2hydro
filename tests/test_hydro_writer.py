@@ -31,6 +31,7 @@ class TestHydroWriter(unittest.TestCase):
                 ],
                 additional_files=[("a.png", b"png"), ("dir/b.txt", b"b")],
                 testdata_files=[("gen.cpp", b"gen"), ("std.cpp", b"std")],
+                checker_name="check.cpp",
             )
 
             zip_path = write_problem_zip(
@@ -69,6 +70,9 @@ class TestHydroWriter(unittest.TestCase):
                 self.assertIn("type: default", config_yaml)
                 self.assertIn("time: 2000ms", config_yaml)
                 self.assertIn("memory: 256MB", config_yaml)
+                self.assertIn("checker_type: testlib", config_yaml)
+                self.assertIn("checker:", config_yaml)
+                self.assertIn("  file: check.cpp", config_yaml)
                 self.assertIn("subtasks:", config_yaml)
                 self.assertIn("  - score: 100", config_yaml)
                 self.assertIn("    if: []", config_yaml)
@@ -92,6 +96,7 @@ class TestHydroWriter(unittest.TestCase):
                 tests=[TestCase(index=1, input_data=b"1\n", output_data=b"2\n")],
                 is_interactive=True,
                 interactor_name="inter.cc",
+                checker_name=None,
             )
 
             zip_path = write_problem_zip(
@@ -109,6 +114,8 @@ class TestHydroWriter(unittest.TestCase):
                 self.assertIn("interactor: inter.cc", config_yaml)
                 self.assertIn("time: 1000ms", config_yaml)
                 self.assertIn("memory: 256MB", config_yaml)
+                self.assertNotIn("checker_type:", config_yaml)
+                self.assertNotIn("checker:", config_yaml)
                 self.assertIn("subtasks:", config_yaml)
                 self.assertIn("  - score: 100", config_yaml)
                 self.assertIn("    if: []", config_yaml)
@@ -130,6 +137,7 @@ class TestHydroWriter(unittest.TestCase):
                 tests=[TestCase(index=1, input_data=b"1\n", output_data=b"2\n")],
                 is_interactive=True,
                 interactor_name=None,
+                checker_name=None,
             )
 
             with self.assertRaises(ValueError) as cm:
@@ -153,6 +161,7 @@ class TestHydroWriter(unittest.TestCase):
                 memory_mb=256,
                 statement_md="# Description\n",
                 tests=[TestCase(index=1, input_data=b"1\n", output_data=b"1\n")],
+                checker_name="check.cpp",
             )
 
             first = write_problem_zip(
@@ -177,6 +186,31 @@ class TestHydroWriter(unittest.TestCase):
             self.assertNotEqual(first, second)
             self.assertEqual(first.name, "同名题目.zip")
             self.assertEqual(second.name, "同名题目 (2).zip")
+
+    def test_write_problem_zip_traditional_missing_checker_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = Path(td) / "out"
+            problem = ProblemData(
+                slug="normal",
+                title="普通题",
+                time_ms=1000,
+                memory_mb=256,
+                statement_md="# Description\n",
+                tests=[TestCase(index=1, input_data=b"1\n", output_data=b"2\n")],
+                is_interactive=False,
+                checker_name=None,
+            )
+
+            with self.assertRaises(ValueError) as cm:
+                write_problem_zip(
+                    problem=problem,
+                    output_dir=out_dir,
+                    local_id=1,
+                    pid="P1002",
+                    owner=1,
+                    tags=[],
+                )
+            self.assertIn("traditional problem missing checker source filename", str(cm.exception))
 
 
 if __name__ == "__main__":

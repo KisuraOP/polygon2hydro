@@ -39,6 +39,7 @@ def write_problem_zip(
                 ],
                 is_interactive=problem.is_interactive,
                 interactor_name=problem.interactor_name,
+                checker_name=problem.checker_name,
             ),
             encoding="utf-8",
         )
@@ -92,12 +93,19 @@ def _build_config_yaml(
     *,
     is_interactive: bool,
     interactor_name: str | None,
+    checker_name: str | None,
 ) -> str:
     lines = ["type: interactive" if is_interactive else "type: default"]
     if is_interactive:
         if not interactor_name:
             raise ValueError("interactive problem missing interactor source filename")
         lines.append(f"interactor: {interactor_name}")
+    else:
+        if not checker_name:
+            raise ValueError("traditional problem missing checker source filename")
+        lines.append("checker_type: testlib")
+        lines.append("checker:")
+        lines.append(f"  file: {checker_name}")
     if time_ms is not None:
         lines.append(f"time: {time_ms}ms")
     if memory_mb is not None:

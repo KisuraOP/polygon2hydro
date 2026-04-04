@@ -187,10 +187,17 @@ class TestPolygonReader(unittest.TestCase):
                 """
                 <problem>
                   <names><name language=\"chinese\" value=\"普通题\"/></names>
+                  <assets>
+                    <checker type=\"testlib\">
+                      <source path=\"files/check.cpp\"/>
+                    </checker>
+                  </assets>
                 </problem>
                 """,
                 encoding="utf-8",
             )
+            (base / "files").mkdir(parents=True)
+            (base / "files" / "check.cpp").write_text("// checker", encoding="utf-8")
             (base / "statement-sections" / "chinese" / "legend.tex").write_text("题面", encoding="utf-8")
             (base / "statement-sections" / "chinese" / "input.tex").write_text("输入", encoding="utf-8")
             (base / "statement-sections" / "chinese" / "output.tex").write_text("输出", encoding="utf-8")
@@ -296,7 +303,7 @@ class TestPolygonReader(unittest.TestCase):
                 """
             )
 
-            files = pr._extract_testdata_files(base, root, "blackorwhite")
+            files = pr._extract_testdata_files(base, root, "blackorwhite", is_interactive=False)
             names = [n for n, _ in files]
             self.assertEqual(names, ["gen_maxtime.cpp", "std.cpp", "val.cpp"])
 
@@ -330,7 +337,7 @@ class TestPolygonReader(unittest.TestCase):
             )
 
             with self.assertRaises(ValueError) as cm:
-                pr._extract_testdata_files(base, root, "dup")
+                pr._extract_testdata_files(base, root, "dup", is_interactive=False)
             self.assertIn("testdata filename collision after flatten", str(cm.exception))
 
     def test_extract_testdata_files_supports_direct_path_and_source(self) -> None:
@@ -358,7 +365,7 @@ class TestPolygonReader(unittest.TestCase):
                 """
             )
 
-            files = pr._extract_testdata_files(base, root, "mixed")
+            files = pr._extract_testdata_files(base, root, "mixed", is_interactive=False)
             names = [n for n, _ in files]
             self.assertEqual(names, ["gen_random.cpp", "std_ai.cpp"])
 
@@ -377,8 +384,143 @@ class TestPolygonReader(unittest.TestCase):
                 """
             )
             with self.assertRaises(ValueError) as cm:
-                pr._extract_testdata_files(base, root, "blackorwhite")
+                pr._extract_testdata_files(base, root, "blackorwhite", is_interactive=False)
             self.assertIn("declared testdata file not found", str(cm.exception))
+
+    def test_extract_checker_name_from_source(self) -> None:
+        root = pr.ET.fromstring(
+            """
+            <problem>
+              <assets>
+                <checker type="testlib">
+                  <source path="files/checker123.cpp" />
+                </checker>
+              </assets>
+            </problem>
+            """
+        )
+        self.assertEqual(pr._extract_checker_name(root), "checker123.cpp")
+
+    def test_extract_checker_name_from_direct_path(self) -> None:
+        root = pr.ET.fromstring(
+            """
+            <problem>
+              <assets>
+                <checker path="files/check.cpp" type="testlib" />
+              </assets>
+            </problem>
+            """
+        )
+        self.assertEqual(pr._extract_checker_name(root), "check.cpp")
+
+    def test_read_problem_traditional_requires_checker(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            slug = "normal-no-checker"
+            base = root / "problems" / slug
+            (base / "statement-sections" / "chinese").mkdir(parents=True)
+            (base / "tests").mkdir(parents=True)
+
+            (base / "problem.xml").write_text(
+                """
+                <problem>
+                  <names><name language="chinese" value="普通题"/></names>
+                </problem>
+                """,
+                encoding="utf-8",
+            )
+            (base / "statement-sections" / "chinese" / "legend.tex").write_text("题面", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "input.tex").write_text("输入", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "output.tex").write_text("输出", encoding="utf-8")
+            (base / "tests" / "1").write_bytes(b"1\n")
+            (base / "tests" / "1.a").write_bytes(b"2\n")
+
+            with self.assertRaises(ValueError) as cm:
+                pr.read_problem(root, slug)
+            self.assertIn("missing checker source", str(cm.exception))
+
+    def test_extract_testdata_files_includes_checker_and_default_check_cpp(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            (base / "files").mkdir(parents=True)
+            (base / "files" / "checker123.cpp").write_bytes(b"checker")
+            (base / "files" / "check.cpp").write_bytes(b"default-checker")
+
+            root = pr.ET.fromstring(
+                """
+                <problem>
+                  <assets>
+                    <checker type="testlib">
+                      <source path="files/checker123.cpp" />
+                    </checker>
+                  </assets>
+                </problem>
+                """
+            )
+
+            files = pr._extract_testdata_files(base, root, "spj", is_interactive=False)
+            names = [n for n, _ in files]
+            self.assertEqual(names, ["check.cpp", "checker123.cpp"])
+
+    def test_extract_testdata_files_allows_same_name_same_source(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            (base / "files").mkdir(parents=True)
+            (base / "files" / "checker.cpp").write_bytes(b"same")
+
+            root = pr.ET.fromstring(
+                """
+                <problem>
+                  <files>
+                    <executables>
+                      <executable>
+                        <source path="files/checker.cpp" />
+                      </executable>
+                    </executables>
+                  </files>
+                  <assets>
+                    <checker type="testlib">
+                      <source path="files/checker.cpp" />
+                    </checker>
+                  </assets>
+                </problem>
+                """
+            )
+
+            files = pr._extract_testdata_files(base, root, "same-source", is_interactive=False)
+            names = [n for n, _ in files]
+            self.assertEqual(names, ["checker.cpp"])
+
+    def test_extract_testdata_files_same_name_different_source_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            (base / "files").mkdir(parents=True)
+            (base / "solutions").mkdir(parents=True)
+            (base / "files" / "checker.cpp").write_bytes(b"a")
+            (base / "solutions" / "checker.cpp").write_bytes(b"b")
+
+            root = pr.ET.fromstring(
+                """
+                <problem>
+                  <files>
+                    <executables>
+                      <executable>
+                        <source path="files/checker.cpp" />
+                      </executable>
+                    </executables>
+                  </files>
+                  <assets>
+                    <checker type="testlib">
+                      <source path="solutions/checker.cpp" />
+                    </checker>
+                  </assets>
+                </problem>
+                """
+            )
+
+            with self.assertRaises(ValueError) as cm:
+                pr._extract_testdata_files(base, root, "diff-source", is_interactive=False)
+            self.assertIn("testdata filename collision after flatten", str(cm.exception))
 
 
 if __name__ == "__main__":

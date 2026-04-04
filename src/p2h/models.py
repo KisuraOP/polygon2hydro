@@ -24,3 +24,4 @@ class ProblemData:
     testdata_files: list[tuple[str, bytes]] = field(default_factory=list)
     is_interactive: bool = False
     interactor_name: str | None = None
+    checker_name: str | None = None

@@ -24,6 +24,11 @@ def _minimal_problem_xml(title: str = "标题") -> str:
     return f"""<problem>
 <names><name language=\"chinese\" value=\"{title}\"/></names>
 <judging><testset><time-limit>1000</time-limit><memory-limit>268435456</memory-limit></testset></judging>
+<assets>
+  <checker type=\"testlib\">
+    <source path=\"files/check.cpp\"/>
+  </checker>
+</assets>
 </problem>"""
 
 
@@ -39,6 +44,7 @@ def _build_minimal_contest_zip(path: Path, slugs: list[str]) -> None:
             zf.writestr(root + "statement-sections/chinese/example.1.a", "2\n")
             zf.writestr(root + "tests/1", "1\n")
             zf.writestr(root + "tests/1.a", "2\n")
+            zf.writestr(root + "files/check.cpp", "#include <bits/stdc++.h>\n")
 
 
 class TestConvert(unittest.TestCase):

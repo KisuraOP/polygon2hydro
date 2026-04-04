@@ -29,10 +29,14 @@ def read_problem(work_root: Path, slug: str, *, verbose: bool = False) -> Proble
     title = _extract_title(root) or slug
     time_ms, memory_mb = _extract_limits(root)
     is_interactive, interactor_name = _extract_interactive_meta(root)
+    checker_name = _extract_checker_name(root)
+    if not is_interactive and not checker_name:
+        raise ValueError(f"{slug}: missing checker source in problem.xml assets/checker")
+
     statement_md, statement_dir = _extract_statement_markdown(base, root, is_interactive=is_interactive)
     tests = _extract_tests(base, slug)
     additional = _extract_additional_files(base, statement_dir)
-    testdata_files = _extract_testdata_files(base, root, slug)
+    testdata_files = _extract_testdata_files(base, root, slug, is_interactive=is_interactive)
 
     if verbose:
         print(
@@ -51,6 +55,7 @@ def read_problem(work_root: Path, slug: str, *, verbose: bool = False) -> Proble
         testdata_files=testdata_files,
         is_interactive=is_interactive,
         interactor_name=interactor_name,
+        checker_name=checker_name,
     )
 
 
@@ -91,6 +96,22 @@ def _extract_interactive_meta(root: ET.Element) -> tuple[bool, str | None]:
     if not rel:
         return True, None
     return True, PurePosixPath(rel).name
+
+
+def _extract_checker_name(root: ET.Element) -> str | None:
+    checker = root.find("./assets/checker")
+    if checker is None:
+        return None
+
+    rel = (checker.attrib.get("path") or "").strip()
+    if not rel:
+        source = checker.find("source")
+        if source is not None:
+            rel = (source.attrib.get("path") or "").strip()
+
+    if not rel:
+        return None
+    return PurePosixPath(rel).name or None
 
 
 def _extract_statement_markdown(base: Path, root: ET.Element, *, is_interactive: bool) -> tuple[str, Path | None]:
@@ -449,20 +470,27 @@ def _extract_additional_files(base: Path, statement_dir: Path | None) -> list[tu
     return sorted(out.items(), key=lambda x: x[0])
 
 
-def _extract_testdata_files(base: Path, root: ET.Element, slug: str) -> list[tuple[str, bytes]]:
+def _extract_testdata_files(base: Path, root: ET.Element, slug: str, *, is_interactive: bool) -> list[tuple[str, bytes]]:
     out: dict[str, bytes] = {}
+    out_sources: dict[str, str] = {}
 
     def _add_rel_path(rel: str) -> None:
         rel_norm = PurePosixPath(rel).as_posix()
         path = base / PurePosixPath(rel_norm)
         if not path.exists() or not path.is_file():
             raise ValueError(f"{slug}: declared testdata file not found: {rel_norm}")
+
         flat_name = PurePosixPath(rel_norm).name
         if not flat_name:
             raise ValueError(f"{slug}: invalid declared testdata file path: {rel_norm}")
+
         if flat_name in out:
+            if out_sources.get(flat_name) == rel_norm:
+                return
             raise ValueError(f"{slug}: testdata filename collision after flatten: {flat_name}")
+
         out[flat_name] = path.read_bytes()
+        out_sources[flat_name] = rel_norm
 
     def _declared_source_path(node: ET.Element) -> str:
         direct = (node.attrib.get("path") or "").strip()
@@ -482,5 +510,17 @@ def _extract_testdata_files(base: Path, root: ET.Element, slug: str) -> list[tup
         rel = _declared_source_path(sol)
         if rel:
             _add_rel_path(rel)
+
+    if not is_interactive:
+        checker = root.find("./assets/checker")
+        if checker is not None:
+            rel = _declared_source_path(checker)
+            if rel:
+                _add_rel_path(rel)
+
+        default_rel = "files/check.cpp"
+        default_checker = base / PurePosixPath(default_rel)
+        if default_checker.exists() and default_checker.is_file():
+            _add_rel_path(default_rel)
 
     return sorted(out.items(), key=lambda x: x[0])
