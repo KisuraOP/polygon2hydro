@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -33,6 +34,54 @@ class TestCliHelpers(unittest.TestCase):
 
 
 class TestCliMain(unittest.TestCase):
+    def test_statement_md_stdout_auto_html(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            inp = Path(td) / "statement.html"
+            inp.write_text("<p>Hello</p>", encoding="utf-8")
+
+            out = io.StringIO()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(["statement-md", str(inp)])
+
+        self.assertEqual(code, 0)
+        self.assertIn("p2h version:", out.getvalue())
+        self.assertIn("# Description", out.getvalue())
+        self.assertIn("Hello", out.getvalue())
+
+    def test_statement_md_write_output_tex_block(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            inp = Path(td) / "legend.txt"
+            outp = Path(td) / "out.md"
+            inp.write_text(r"\\begin{itemize}\\item A\\item B\\end{itemize}", encoding="utf-8")
+
+            out = io.StringIO()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(["statement-md", str(inp), "--type", "tex-block", "-o", str(outp)])
+
+            self.assertTrue(outp.exists())
+            rendered = outp.read_text(encoding="utf-8")
+
+        self.assertEqual(code, 0)
+        self.assertIn("p2h version:", out.getvalue())
+        self.assertIn("- A", rendered)
+        self.assertIn("- B", rendered)
+
+    def test_statement_md_auto_infer_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            inp = Path(td) / "statement.unknown"
+            inp.write_text("x", encoding="utf-8")
+
+            out = io.StringIO()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit) as cm:
+                    cli.main(["statement-md", str(inp)])
+
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("cannot infer --type", err.getvalue())
+
     def test_main_passes_arguments_to_convert(self) -> None:
         captured: dict[str, object] = {}
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from p2h import __version__
 from p2h.convert import convert_contest
+from p2h.statement_markdown import html_to_markdown, tex_block_to_markdown, tex_to_markdown
 
 
 _PID_RE = re.compile(r"^([A-Za-z]+)(\d+)$")
@@ -57,7 +58,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="behavior when doall precheck finds missing tools: warn (default), ask, or error",
     )
 
+    p_stmt = sub.add_parser("statement-md", help="convert statement source (html/tex) to markdown")
+    p_stmt.add_argument("input_path", type=Path)
+    p_stmt.add_argument("--type", dest="statement_type", choices=["auto", "html", "tex", "tex-block"], default="auto")
+    p_stmt.add_argument("-o", "--output", type=Path)
+
     return parser
+
+
+def _infer_statement_type(path: Path) -> str | None:
+    suffix = path.suffix.lower()
+    if suffix in {".html", ".htm"}:
+        return "html"
+    if suffix == ".tex":
+        return "tex"
+    return None
+
+
+def _render_statement_markdown(path: Path, statement_type: str) -> str:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    if statement_type == "html":
+        return html_to_markdown(text)
+    if statement_type == "tex":
+        return tex_to_markdown(text)
+    if statement_type == "tex-block":
+        content = tex_block_to_markdown(text)
+        return (content + "\n") if content and not content.endswith("\n") else content
+    raise ValueError(f"unknown statement type: {statement_type}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,6 +115,21 @@ def main(argv: list[str] | None = None) -> int:
             for line in summary.errors:
                 print(f"- {line}", file=sys.stderr)
             return 1
+
+    if args.command == "statement-md":
+        statement_type = args.statement_type
+        if statement_type == "auto":
+            inferred = _infer_statement_type(args.input_path)
+            if inferred is None:
+                parser.error("cannot infer --type from input path; please set --type explicitly")
+            statement_type = inferred
+
+        rendered = _render_statement_markdown(args.input_path, statement_type)
+        if args.output is None:
+            sys.stdout.write(rendered)
+        else:
+            args.output.write_text(rendered, encoding="utf-8")
+
     return 0
 
 

@@ -41,6 +41,10 @@ PYTHONPATH=src python3 -m p2h.cli convert ...
 p2h convert <contest_zip> -o <output_dir> --pid-start P1145 [options]
 ```
 
+```bash
+p2h statement-md <input_path> [--type auto|html|tex|tex-block] [-o <output_path>]
+```
+
 ### 3.1 参数说明
 
 - `contest_zip`：Polygon contest 包路径。
@@ -53,6 +57,13 @@ p2h convert <contest_zip> -o <output_dir> --pid-start P1145 [options]
 - `--no-run-doall`：跳过 `doall.sh`，仅使用已有测试文件。
 - `--missing-env {warn,ask,error}`：`doall` 依赖预检查策略；`warn` 仅告警并继续（默认），`ask` 交互确认后继续，`error` 直接失败。
 - `--verbose`：输出详细日志。
+
+`statement-md` 参数：
+- `input_path`：待转换题面文件路径。
+- `--type {auto,html,tex,tex-block}`：输入类型（默认 `auto`，按扩展名推断：`.html/.htm` -> html，`.tex` -> tex）。
+- `-o, --output`：输出 markdown 文件路径；不提供时输出到 stdout。
+
+当 `--type auto` 且无法从后缀推断类型时，会报错并提示显式指定 `--type`。
 
 ## 4. 使用示例
 
@@ -74,6 +85,18 @@ p2h convert example/polygon-contest-package/contest-56961.zip \
   --pid-start P2000 \
   --only buy-cpu \
   --only colorful-path,kettle
+```
+
+### 4.3 独立试转题面（输出到 stdout）
+
+```bash
+p2h statement-md problems/a/statements/chinese/problem.html
+```
+
+### 4.4 独立试转题面（显式类型并写文件）
+
+```bash
+p2h statement-md problems/a/statement-sections/chinese/legend.tex --type tex-block -o legend.md
 ```
 
 ## 5. 输出结构示例
