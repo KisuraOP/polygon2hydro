@@ -110,14 +110,26 @@ p2h convert example/polygon-contest-package/contest-56961.zip \
 - `# Samples`（`input1/output1`, `input2/output2`, ...）
 - `# Note`
 
-交互题同时会在 `testdata/config.yaml` 中生成：
+交互题会在 `testdata/config.yaml` 中生成：
 - `type: interactive`
 - `interactor: <from problem.xml assets/interactor/source path filename>`
 - `time: <...ms>`（若可提取）
 - `memory: <...MB>`（若可提取）
-- `subtasks: []`
+- `subtasks`（单一分组，`cases` 按测试点数量动态生成）
 
-若题目中无 `assets/interactor`，则保持传统题配置（`type: default`）。
+传统题会在 `testdata/config.yaml` 中生成：
+- `type: default`
+- `checker_type: testlib`
+- `checker.file: <from problem.xml assets/checker/source path filename>`
+- `time: <...ms>`（若可提取）
+- `memory: <...MB>`（若可提取）
+- `subtasks`（单一分组，`cases` 按测试点数量动态生成）
+
+此外，传统题会将 checker 相关源文件纳入 `testdata`：
+- `<files><executables>`、`<assets><solutions>`、`<assets><checker>` 声明的源文件
+- 若 `files/check.cpp` 存在，即使未声明也会额外纳入
+
+若题目中无 `assets/interactor`，则按传统题流程处理。
 
 图片会尽量转换为 Hydro 常用格式，例如：
 
@@ -150,7 +162,7 @@ p2h convert example/polygon-contest-package/contest-56961.zip \
 ## 8. 常见错误
 
 - `unknown slug(s): ...`：`--only` 指定的 slug 不存在于 contest 包中。
-- `missing answer for test index ...`：缺少 `.a` 答案文件；可启用 `--run-doall` 或先在 Polygon 侧生成测试。
+- `missing answer for test key ...`：缺少与输入同名的答案文件（如 `x.a` 或 `x.out`）；可启用 `--run-doall` 或先在 Polygon 侧生成测试。
 - `missing problem.xml`：题目目录结构不完整。
 
 ## 9. 测试
