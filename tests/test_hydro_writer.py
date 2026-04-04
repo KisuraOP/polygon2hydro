@@ -69,7 +69,16 @@ class TestHydroWriter(unittest.TestCase):
                 self.assertIn("type: default", config_yaml)
                 self.assertIn("time: 2000ms", config_yaml)
                 self.assertIn("memory: 256MB", config_yaml)
-                self.assertIn("subtasks: []", config_yaml)
+                self.assertIn("subtasks:", config_yaml)
+                self.assertIn("  - score: 100", config_yaml)
+                self.assertIn("    if: []", config_yaml)
+                self.assertIn("    id: 1", config_yaml)
+                self.assertIn("    type: min", config_yaml)
+                self.assertIn("    cases:", config_yaml)
+                self.assertIn("      - input: tests01.in", config_yaml)
+                self.assertIn("        output: tests01.out", config_yaml)
+                self.assertIn("      - input: tests02.in", config_yaml)
+                self.assertIn("        output: tests02.out", config_yaml)
 
     def test_write_problem_zip_interactive_config(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -100,7 +109,14 @@ class TestHydroWriter(unittest.TestCase):
                 self.assertIn("interactor: inter.cc", config_yaml)
                 self.assertIn("time: 1000ms", config_yaml)
                 self.assertIn("memory: 256MB", config_yaml)
-                self.assertIn("subtasks: []", config_yaml)
+                self.assertIn("subtasks:", config_yaml)
+                self.assertIn("  - score: 100", config_yaml)
+                self.assertIn("    if: []", config_yaml)
+                self.assertIn("    id: 1", config_yaml)
+                self.assertIn("    type: min", config_yaml)
+                self.assertIn("    cases:", config_yaml)
+                self.assertIn("      - input: tests01.in", config_yaml)
+                self.assertIn("        output: tests01.out", config_yaml)
 
     def test_write_problem_zip_interactive_missing_interactor_raises(self) -> None:
         with tempfile.TemporaryDirectory() as td:

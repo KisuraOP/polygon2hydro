@@ -30,6 +30,13 @@ def write_problem_zip(
             _build_config_yaml(
                 problem.time_ms,
                 problem.memory_mb,
+                test_files=[
+                    (
+                        case.input_name or f"tests{case.index:02d}.in",
+                        case.output_name or f"tests{case.index:02d}.out",
+                    )
+                    for case in problem.tests
+                ],
                 is_interactive=problem.is_interactive,
                 interactor_name=problem.interactor_name,
             ),
@@ -37,9 +44,10 @@ def write_problem_zip(
         )
 
         for case in problem.tests:
-            idx = f"{case.index:02d}"
-            (root / "testdata" / f"tests{idx}.in").write_bytes(case.input_data)
-            (root / "testdata" / f"tests{idx}.out").write_bytes(case.output_data)
+            input_name = case.input_name or f"tests{case.index:02d}.in"
+            output_name = case.output_name or f"tests{case.index:02d}.out"
+            (root / "testdata" / input_name).write_bytes(case.input_data)
+            (root / "testdata" / output_name).write_bytes(case.output_data)
 
         if problem.testdata_files:
             for name, data in problem.testdata_files:
@@ -80,6 +88,7 @@ def _build_problem_yaml(pid: str, owner: int, title: str, tags: list[str]) -> st
 def _build_config_yaml(
     time_ms: int | None,
     memory_mb: int | None,
+    test_files: list[tuple[str, str]],
     *,
     is_interactive: bool,
     interactor_name: str | None,
@@ -93,7 +102,23 @@ def _build_config_yaml(
         lines.append(f"time: {time_ms}ms")
     if memory_mb is not None:
         lines.append(f"memory: {memory_mb}MB")
-    lines.append("subtasks: []")
+    lines.extend(
+        [
+            "subtasks:",
+            "  - score: 100",
+            "    if: []",
+            "    id: 1",
+            "    type: min",
+            "    cases:",
+        ]
+    )
+    for input_name, output_name in test_files:
+        lines.extend(
+            [
+                f"      - input: {input_name}",
+                f"        output: {output_name}",
+            ]
+        )
     lines.append("")
     return "\n".join(lines)
 

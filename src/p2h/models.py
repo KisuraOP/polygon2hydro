@@ -8,6 +8,8 @@ class TestCase:
     index: int
     input_data: bytes
     output_data: bytes
+    input_name: str | None = None
+    output_name: str | None = None
 
 
 @dataclass(slots=True)

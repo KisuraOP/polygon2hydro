@@ -27,6 +27,7 @@ htmlcov/
 
 # Claude/local tooling
 .claude/
+CLAUDE.md
 
 # Local generated outputs
 out/

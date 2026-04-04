@@ -364,8 +364,8 @@ def _strip_tags(text: str) -> str:
 
 def _extract_tests(base: Path, slug: str) -> list[TestCase]:
     test_dir = base / "tests"
-    ins: dict[int, bytes] = {}
-    outs: dict[int, bytes] = {}
+    ins: dict[str, tuple[str, bytes]] = {}
+    outs: dict[str, tuple[str, bytes]] = {}
 
     if not test_dir.exists():
         raise ValueError(f"{slug}: no tests under problems/{slug}/tests")
@@ -373,31 +373,57 @@ def _extract_tests(base: Path, slug: str) -> list[TestCase]:
     for path in test_dir.iterdir():
         if not path.is_file():
             continue
-        m = re.fullmatch(r"(\d+)(\.a)?", path.name)
-        if not m:
-            continue
-        idx = int(m.group(1))
-        data = path.read_bytes()
-        if m.group(2) == ".a":
-            outs[idx] = data
-        else:
-            ins[idx] = data
 
-    indexes = sorted(set(ins) | set(outs))
-    if not indexes:
+        name = path.name
+        if name.endswith(".a"):
+            stem = name[:-2]
+            if not stem:
+                continue
+            outs[stem] = (name, path.read_bytes())
+            continue
+
+        if name.endswith(".out"):
+            stem = name[:-4]
+            if not stem:
+                continue
+            outs[stem] = (name, path.read_bytes())
+            continue
+
+        if name.endswith(".in"):
+            stem = name[:-3]
+            if not stem:
+                continue
+            ins[stem] = (name, path.read_bytes())
+            continue
+
+        ins[name] = (name, path.read_bytes())
+
+    keys = sorted(set(ins) | set(outs))
+    if not keys:
         raise ValueError(f"{slug}: no tests under problems/{slug}/tests")
 
     cases: list[TestCase] = []
-    for new_idx, original_idx in enumerate(indexes, start=1):
-        input_data = ins.get(original_idx)
-        if input_data is None:
-            raise ValueError(f"{slug}: missing input for test index {original_idx}")
-        output_data = outs.get(original_idx)
-        if output_data is None:
+    for new_idx, key in enumerate(keys, start=1):
+        input_item = ins.get(key)
+        if input_item is None:
+            raise ValueError(f"{slug}: missing input for test key {key}")
+        output_item = outs.get(key)
+        if output_item is None:
             raise ValueError(
-                f"{slug}: missing answer for test index {original_idx}; run with --run-doall or pre-generate tests"
+                f"{slug}: missing answer for test key {key}; run with --run-doall or pre-generate tests"
             )
-        cases.append(TestCase(index=new_idx, input_data=input_data, output_data=output_data))
+
+        input_name = f"{key}.in"
+        output_name = f"{key}.out"
+        cases.append(
+            TestCase(
+                index=new_idx,
+                input_data=input_item[1],
+                output_data=output_item[1],
+                input_name=input_name,
+                output_name=output_name,
+            )
+        )
     return cases
 
 

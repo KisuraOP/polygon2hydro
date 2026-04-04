@@ -229,8 +229,12 @@ class TestPolygonReader(unittest.TestCase):
 
             cases = pr._extract_tests(base, "s")
             self.assertEqual([c.index for c in cases], [1, 2])
-            self.assertEqual(cases[0].input_data, b"in3\n")
-            self.assertEqual(cases[1].output_data, b"out10\n")
+            self.assertEqual(cases[0].input_name, "10.in")
+            self.assertEqual(cases[0].output_name, "10.out")
+            self.assertEqual(cases[0].input_data, b"in10\n")
+            self.assertEqual(cases[1].input_name, "3.in")
+            self.assertEqual(cases[1].output_name, "3.out")
+            self.assertEqual(cases[1].output_data, b"out3\n")
 
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
