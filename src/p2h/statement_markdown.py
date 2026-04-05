@@ -73,6 +73,137 @@ def _tex_math_block_to_md(match: re.Match[str]) -> str:
     return f"\n$$\n{body}\n$$\n"
 
 
+def _normalize_arrow_tokens(text: str) -> str:
+    s = text
+    s = re.sub(r"\\rightarrow\b", r"\\to", s)
+    s = re.sub(r"\\Rightarrow\b", r"\\to", s)
+    s = re.sub(r"\\Longrightarrow\b", r"\\to", s)
+    s = re.sub(r"\\longrightarrow\b", r"\\to", s)
+    s = re.sub(r"(?<!\\)\barrow\b", r"\\to", s)
+    s = re.sub(r"\\to\s+", r"\\to ", s)
+    return s
+
+
+def _normalize_math_arrow_tokens(text: str) -> str:
+    s = text
+
+    s = re.sub(r"\$\$(.*?)\$\$", lambda m: "$$" + _normalize_arrow_tokens(m.group(1)) + "$$", s, flags=re.S)
+    s = re.sub(r"(?<!\$)\$([^\n$]+?)\$", lambda m: "$" + _normalize_arrow_tokens(m.group(1)) + "$", s)
+    s = re.sub(r"\\\((.*?)\\\)", lambda m: r"\(" + _normalize_arrow_tokens(m.group(1)) + r"\)", s, flags=re.S)
+    s = re.sub(r"\\\[(.*?)\\\]", lambda m: r"\[" + _normalize_arrow_tokens(m.group(1)) + r"\]", s, flags=re.S)
+
+    return s
+
+
+def _matrix_to_array_repl(match: re.Match[str]) -> str:
+    body = _normalize_newlines(match.group(1))
+    rows = [line.strip() for line in body.split("\n") if line.strip()]
+    if not rows:
+        return r"\begin{array}{ll}\end{array}"
+
+    normalized: list[str] = []
+    for idx, row in enumerate(rows):
+        row = re.sub(r"\s*\\\\\s*$", "", row)
+        row = _normalize_arrow_tokens(row)
+        if idx < len(rows) - 1:
+            row = row + " __MATRIX_ROW_BREAK__"
+        normalized.append(row)
+
+    return r"\begin{array}{ll}" + "\n" + "\n".join(normalized) + "\n" + r"\end{array}"
+
+
+def _normalize_matrix_envs(text: str) -> str:
+    return re.sub(r"\\begin\{matrix\}(.*?)\\end\{matrix\}", _matrix_to_array_repl, text, flags=re.S)
+
+
+def _restore_math_placeholders(text: str) -> str:
+    return text.replace("__MATRIX_ROW_BREAK__", r" \\")
+
+
+def _find_matching_brace(text: str, open_idx: int) -> int | None:
+    if open_idx < 0 or open_idx >= len(text) or text[open_idx] != "{":
+        return None
+
+    depth = 0
+    i = open_idx
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return None
+
+
+def _epigraph_to_markdown(text: str) -> str:
+    s = text
+    out: list[str] = []
+    pos = 0
+
+    while True:
+        idx = s.find(r"\epigraph", pos)
+        if idx < 0:
+            out.append(s[pos:])
+            break
+
+        out.append(s[pos:idx])
+        i = idx + len(r"\epigraph")
+        while i < len(s) and s[i].isspace():
+            i += 1
+
+        if i >= len(s) or s[i] != "{":
+            out.append(s[idx:idx + len(r"\epigraph")])
+            pos = idx + len(r"\epigraph")
+            continue
+
+        body_close = _find_matching_brace(s, i)
+        if body_close is None:
+            out.append(s[idx:])
+            break
+
+        j = body_close + 1
+        while j < len(s) and s[j].isspace():
+            j += 1
+        if j >= len(s) or s[j] != "{":
+            out.append(s[idx:body_close + 1])
+            pos = body_close + 1
+            continue
+
+        source_close = _find_matching_brace(s, j)
+        if source_close is None:
+            out.append(s[idx:])
+            break
+
+        body = s[i + 1:body_close]
+        source = s[j + 1:source_close]
+
+        body_text = _normalize_newlines(body)
+        body_text = re.sub(r"\\\\\s*", "\n", body_text)
+        quote_lines = [line.strip() for line in body_text.split("\n") if line.strip()]
+        source_text = _normalize_newlines(source).strip()
+        source_text = re.sub(r"^[\-—\s]+", "", source_text)
+
+        lines: list[str] = []
+        for line in quote_lines:
+            lines.append(f"> {line}  ")
+        if source_text:
+            lines.append(f"> ——{source_text}")
+
+        block = "\n".join(lines)
+        if block:
+            out.append("\n" + block + "\n")
+
+        pos = source_close + 1
+
+    return "".join(out)
+
+
 def _tex_inline_to_markdown(text: str) -> str:
     s = text
     s = re.sub(
@@ -84,20 +215,33 @@ def _tex_inline_to_markdown(text: str) -> str:
         ),
         s,
     )
+
+    s = re.sub(r"\\t\{([^{}]*)\}", r"\\texttt{\1}", s)
+    placeholders: dict[str, str] = {}
+
+    def _texttt_in_math_repl(m: re.Match[str]) -> str:
+        key = f"__TEXTTT_MATH_{len(placeholders)}__"
+        placeholders[key] = f"$\\texttt{{{m.group(1)}}}$"
+        return key
+
+    s = re.sub(r"(?<!\\)\$\\texttt\{([^{}]*)\}\$", _texttt_in_math_repl, s)
+    s = re.sub(r"\\texttt\{([^{}]*)\}", r"$\\texttt{\1}$", s)
+    for key, value in placeholders.items():
+        s = s.replace(key, value)
+
     replacements = [
         (r"\\textbf\{([^{}]*)\}", r"**\1**"),
         (r"\\textit\{([^{}]*)\}", r"*\1*"),
         (r"\\emph\{([^{}]*)\}", r"*\1*"),
-        (r"\\texttt\{([^{}]*)\}", r"`\1`"),
-        (r"\\t\{([^{}]*)\}", r"`\1`"),
         (r"\\\$", "$"),
-        (r"\\(left|right|displaystyle|quad|qquad)", ""),
+        (r"\\(?:left|right|displaystyle|quad|qquad)\b", ""),
         (r"~", " "),
     ]
     for old, new in replacements:
         s = re.sub(old, new, s)
     s = re.sub(r"\\\\", "\n", s)
     s = re.sub(r"\n\s*\n", "\n\n", s)
+    s = _restore_math_placeholders(s)
     return s
 
 
@@ -148,10 +292,13 @@ def html_to_markdown(text: str) -> str:
 def tex_block_to_markdown(text: str) -> str:
     s = _normalize_newlines(text)
     s = _strip_tex_comments(s)
+    s = _normalize_matrix_envs(s)
+    s = _normalize_math_arrow_tokens(s)
+    s = _epigraph_to_markdown(s)
     s = re.sub(r"\\begin\{center\}(.*?)\\end\{center\}", _center_block_to_markdown, s, flags=re.S)
     s = re.sub(r"\\begin\{enumerate\}(.*?)\\end\{enumerate\}", _tex_enum_to_md, s, flags=re.S)
     s = re.sub(r"\\begin\{itemize\}(.*?)\\end\{itemize\}", _tex_itemize_to_md, s, flags=re.S)
-    s = re.sub(r"\\begin\{(verbatim|lstlisting)\}(.*?)\\end\{\1\}", _tex_code_to_md, s, flags=re.S)
+    s = re.sub(r"\\begin\{(verbatim|lstlisting|BVerbatim)\}(?:\[[^\]]*\])?(.*?)\\end\{\1\}", _tex_code_to_md, s, flags=re.S)
     s = re.sub(r"\\begin\{(equation\*?|align\*?)\}(.*?)\\end\{\1\}", _tex_math_block_to_md, s, flags=re.S)
     s = _tex_inline_to_markdown(s)
     s = re.sub(r"\n{3,}", "\n\n", s)
@@ -161,16 +308,19 @@ def tex_block_to_markdown(text: str) -> str:
 def tex_to_markdown(text: str) -> str:
     content = _normalize_newlines(text)
     content = _strip_tex_comments(content)
+    content = _normalize_matrix_envs(content)
+    content = _normalize_math_arrow_tokens(content)
+    content = _epigraph_to_markdown(content)
     content = re.sub(r"\\begin\{problem\}\{.*?\}\{.*?\}\{.*?\}\{.*?\}\{.*?\}", "", content, flags=re.S)
     content = content.replace("\\end{problem}", "")
     content = re.sub(r"\\section\*?\{([^}]*)\}", lambda m: f"\n# {m.group(1)}\n", content)
     content = re.sub(r"\\subsection\*?\{([^}]*)\}", lambda m: f"\n## {m.group(1)}\n", content)
     content = re.sub(r"\\begin\{itemize\}(.*?)\\end\{itemize\}", _tex_itemize_to_md, content, flags=re.S)
     content = re.sub(r"\\begin\{enumerate\}(.*?)\\end\{enumerate\}", _tex_enum_to_md, content, flags=re.S)
-    content = re.sub(r"\\begin\{(verbatim|lstlisting)\}(.*?)\\end\{\1\}", _tex_code_to_md, content, flags=re.S)
+    content = re.sub(r"\\begin\{(verbatim|lstlisting|BVerbatim)\}(?:\[[^\]]*\])?(.*?)\\end\{\1\}", _tex_code_to_md, content, flags=re.S)
     content = re.sub(r"\\begin\{(equation\*?|align\*?)\}(.*?)\\end\{\1\}", _tex_math_block_to_md, content, flags=re.S)
     content = _tex_inline_to_markdown(content)
-    content = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?", "", content)
+    content = re.sub(r"\\(?!texttt\b|begin\b|end\b|to\b)[a-zA-Z]+\*?(\[[^\]]*\])?", "", content)
     content = re.sub(r"\n{3,}", "\n\n", content).strip()
     if not content:
         return "# Description\n\n(Statement conversion fallback from TeX)\n"

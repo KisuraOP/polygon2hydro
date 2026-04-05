@@ -59,11 +59,13 @@ p2h statement-md <input_path> [--type auto|html|tex|tex-block] [-o <output_path>
 - `--verbose`：输出详细日志。
 
 `statement-md` 参数：
-- `input_path`：待转换题面文件路径。
-- `--type {auto,html,tex,tex-block}`：输入类型（默认 `auto`，按扩展名推断：`.html/.htm` -> html，`.tex` -> tex）。
-- `-o, --output`：输出 markdown 文件路径；不提供时输出到 stdout。
+- `input_path`：待转换输入，可为“题面文件”或“题目目录（需包含 problem.xml）”。
+- `--type {auto,html,tex,tex-block}`：文件模式输入类型（默认 `auto`，按扩展名推断：`.html/.htm` -> html，`.tex` -> tex）。目录模式下该参数会被忽略。
+- `--lang {auto,chinese,english}`：仅目录模式生效；`auto` 时按比赛级 `statements/` 语言策略选择。
+- `-o, --output`：输出 markdown 文件路径；文件模式不提供时输出到 stdout，目录模式不提供时默认写到 `<input_path>/problem_zh.md`。
 
-当 `--type auto` 且无法从后缀推断类型时，会报错并提示显式指定 `--type`。
+当文件模式下 `--type auto` 且无法从后缀推断类型时，会报错并提示显式指定 `--type`。
+
 
 ## 4. 使用示例
 
@@ -87,19 +89,33 @@ p2h convert example/polygon-contest-package/contest-56961.zip \
   --only colorful-path,kettle
 ```
 
-### 4.3 独立试转题面（输出到 stdout）
+### 4.3 独立试转题面（文件模式，输出到 stdout）
 
 ```bash
 p2h statement-md problems/a/statements/chinese/problem.html
 ```
 
-### 4.4 独立试转题面（显式类型并写文件）
+### 4.4 独立试转题面（文件模式，显式类型并写文件）
 
 ```bash
 p2h statement-md problems/a/statement-sections/chinese/legend.tex --type tex-block -o legend.md
 ```
 
+### 4.5 生成最终题面 problem_zh.md（目录模式）
+
+```bash
+p2h statement-md problems/a
+```
+
+### 4.6 目录模式指定语言与输出路径
+
+```bash
+p2h statement-md problems/a --lang english -o problem_zh.md
+```
+
 ## 5. 输出结构示例
+
+### 5.1 题目包输出结构示例
 
 ```text
 题目名.zip

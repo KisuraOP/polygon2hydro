@@ -82,6 +82,92 @@ class TestCliMain(unittest.TestCase):
         self.assertEqual(cm.exception.code, 2)
         self.assertIn("cannot infer --type", err.getvalue())
 
+    def test_statement_md_problem_dir_default_writes_problem_zh(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "problems" / "a"
+            (root / "statements" / "english").mkdir(parents=True)
+            (base / "statement-sections" / "chinese").mkdir(parents=True)
+            (base / "statement-sections" / "english").mkdir(parents=True)
+            (base / "problem.xml").write_text(
+                """
+                <problem>
+                  <assets>
+                    <checker type=\"testlib\"><source path=\"files/check.cpp\"/></checker>
+                  </assets>
+                </problem>
+                """,
+                encoding="utf-8",
+            )
+            (base / "statement-sections" / "chinese" / "legend.tex").write_text("中文题面", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "input.tex").write_text("中文输入", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "output.tex").write_text("中文输出", encoding="utf-8")
+            (base / "statement-sections" / "english" / "legend.tex").write_text("English statement", encoding="utf-8")
+            (base / "statement-sections" / "english" / "input.tex").write_text("Input format", encoding="utf-8")
+            (base / "statement-sections" / "english" / "output.tex").write_text("Output format", encoding="utf-8")
+
+            out = io.StringIO()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(["statement-md", str(base)])
+
+            output_file = base / "problem_zh.md"
+            self.assertTrue(output_file.exists())
+            rendered = output_file.read_text(encoding="utf-8")
+
+        self.assertEqual(code, 0)
+        self.assertIn("English statement", rendered)
+        self.assertIn("# Format", rendered)
+
+    def test_statement_md_problem_dir_lang_override(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "problems" / "a"
+            (root / "statements" / "english").mkdir(parents=True)
+            (base / "statement-sections" / "chinese").mkdir(parents=True)
+            (base / "statement-sections" / "english").mkdir(parents=True)
+            (base / "problem.xml").write_text("<problem></problem>", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "legend.tex").write_text("中文题面", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "input.tex").write_text("中文输入", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "output.tex").write_text("中文输出", encoding="utf-8")
+            (base / "statement-sections" / "english" / "legend.tex").write_text("English statement", encoding="utf-8")
+            (base / "statement-sections" / "english" / "input.tex").write_text("Input format", encoding="utf-8")
+            (base / "statement-sections" / "english" / "output.tex").write_text("Output format", encoding="utf-8")
+
+            code = cli.main(["statement-md", str(base), "--lang", "chinese"])
+            rendered = (base / "problem_zh.md").read_text(encoding="utf-8")
+
+        self.assertEqual(code, 0)
+        self.assertIn("中文题面", rendered)
+        self.assertNotIn("English statement", rendered)
+
+    def test_statement_md_problem_dir_with_output(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "problems" / "a"
+            outp = root / "custom.md"
+            (base / "statement-sections" / "chinese").mkdir(parents=True)
+            (base / "problem.xml").write_text("<problem></problem>", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "legend.tex").write_text("中文题面", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "input.tex").write_text("中文输入", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "output.tex").write_text("中文输出", encoding="utf-8")
+
+            code = cli.main(["statement-md", str(base), "-o", str(outp)])
+            self.assertEqual(code, 0)
+            self.assertTrue(outp.exists())
+            self.assertIn("中文题面", outp.read_text(encoding="utf-8"))
+
+    def test_statement_md_directory_without_problem_xml_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            out = io.StringIO()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit) as cm:
+                    cli.main(["statement-md", str(d)])
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("must contain problem.xml", err.getvalue())
+
     def test_main_passes_arguments_to_convert(self) -> None:
         captured: dict[str, object] = {}
 

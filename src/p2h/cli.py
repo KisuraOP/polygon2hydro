@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 
 from p2h import __version__
-from p2h.convert import convert_contest
+from p2h.convert import _detect_contest_statement_language, convert_contest
+from p2h.polygon_reader import _extract_interactive_meta, _extract_statement_markdown
 from p2h.statement_markdown import html_to_markdown, tex_block_to_markdown, tex_to_markdown
 
 
@@ -61,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_stmt = sub.add_parser("statement-md", help="convert statement source (html/tex) to markdown")
     p_stmt.add_argument("input_path", type=Path)
     p_stmt.add_argument("--type", dest="statement_type", choices=["auto", "html", "tex", "tex-block"], default="auto")
+    p_stmt.add_argument("--lang", choices=["auto", "chinese", "english"], default="auto")
     p_stmt.add_argument("-o", "--output", type=Path)
 
     return parser
@@ -85,6 +87,39 @@ def _render_statement_markdown(path: Path, statement_type: str) -> str:
         content = tex_block_to_markdown(text)
         return (content + "\n") if content and not content.endswith("\n") else content
     raise ValueError(f"unknown statement type: {statement_type}")
+
+
+def _is_problem_directory(path: Path) -> bool:
+    return path.is_dir() and (path / "problem.xml").exists()
+
+
+def _resolve_statement_language_for_problem_dir(problem_dir: Path, lang: str) -> str | None:
+    if lang in {"chinese", "english"}:
+        return lang
+
+    if problem_dir.parent.name == "problems":
+        work_root = problem_dir.parent.parent
+        return _detect_contest_statement_language(work_root)
+    return None
+
+
+def _render_statement_markdown_from_problem_dir(problem_dir: Path, lang: str) -> str:
+    import xml.etree.ElementTree as ET
+
+    xml_path = problem_dir / "problem.xml"
+    if not xml_path.exists():
+        raise ValueError(f"missing problem.xml under {problem_dir}")
+
+    root = ET.fromstring(xml_path.read_bytes())
+    statement_language = _resolve_statement_language_for_problem_dir(problem_dir, lang)
+    is_interactive, _ = _extract_interactive_meta(root)
+    md, _ = _extract_statement_markdown(
+        problem_dir,
+        root,
+        is_interactive=is_interactive,
+        statement_language=statement_language,
+    )
+    return md
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -117,6 +152,15 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     if args.command == "statement-md":
+        if _is_problem_directory(args.input_path):
+            rendered = _render_statement_markdown_from_problem_dir(args.input_path, args.lang)
+            output_path = args.output or (args.input_path / "problem_zh.md")
+            output_path.write_text(rendered, encoding="utf-8")
+            return 0
+
+        if args.input_path.is_dir():
+            parser.error("input directory must contain problem.xml")
+
         statement_type = args.statement_type
         if statement_type == "auto":
             inferred = _infer_statement_type(args.input_path)
@@ -129,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write(rendered)
         else:
             args.output.write_text(rendered, encoding="utf-8")
+        return 0
 
     return 0
 
