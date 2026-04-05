@@ -141,6 +141,243 @@ class TestCliMain(unittest.TestCase):
         self.assertIn("中文题面", rendered)
         self.assertNotIn("English statement", rendered)
 
+    def test_statement_md_problem_dir_lang_english_override(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "problems" / "a"
+            (root / "statements" / "chinese").mkdir(parents=True)
+            (base / "statement-sections" / "chinese").mkdir(parents=True)
+            (base / "statement-sections" / "english").mkdir(parents=True)
+            (base / "problem.xml").write_text("<problem></problem>", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "legend.tex").write_text("中文题面", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "input.tex").write_text("中文输入", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "output.tex").write_text("中文输出", encoding="utf-8")
+            (base / "statement-sections" / "english" / "legend.tex").write_text("English statement", encoding="utf-8")
+            (base / "statement-sections" / "english" / "input.tex").write_text("Input format", encoding="utf-8")
+            (base / "statement-sections" / "english" / "output.tex").write_text("Output format", encoding="utf-8")
+
+            code = cli.main(["statement-md", str(base), "--lang", "english"])
+            rendered = (base / "problem_zh.md").read_text(encoding="utf-8")
+
+        self.assertEqual(code, 0)
+        self.assertIn("English statement", rendered)
+        self.assertNotIn("中文题面", rendered)
+
+    def test_statement_md_problem_dir_lang_auto_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "problems" / "a"
+            (root / "statements" / "english").mkdir(parents=True)
+            (base / "statement-sections" / "chinese").mkdir(parents=True)
+            (base / "statement-sections" / "english").mkdir(parents=True)
+            (base / "problem.xml").write_text("<problem></problem>", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "legend.tex").write_text("中文题面", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "input.tex").write_text("中文输入", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "output.tex").write_text("中文输出", encoding="utf-8")
+            (base / "statement-sections" / "english" / "legend.tex").write_text("English statement", encoding="utf-8")
+            (base / "statement-sections" / "english" / "input.tex").write_text("Input format", encoding="utf-8")
+            (base / "statement-sections" / "english" / "output.tex").write_text("Output format", encoding="utf-8")
+
+            code = cli.main(["statement-md", str(base), "--lang", "auto"])
+            rendered = (base / "problem_zh.md").read_text(encoding="utf-8")
+
+        self.assertEqual(code, 0)
+        self.assertIn("English statement", rendered)
+
+    def test_statement_md_file_mode_explicit_html_type(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            inp = Path(td) / "statement.any"
+            inp.write_text("<p>Hello HTML</p>", encoding="utf-8")
+
+            out = io.StringIO()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(["statement-md", str(inp), "--type", "html"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Hello HTML", out.getvalue())
+
+    def test_statement_md_file_mode_explicit_tex_type(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            inp = Path(td) / "statement.any"
+            inp.write_text("\\section{Desc}\nText", encoding="utf-8")
+
+            out = io.StringIO()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(["statement-md", str(inp), "--type", "tex"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("# Desc", out.getvalue())
+        self.assertIn("Text", out.getvalue())
+
+    def test_statement_md_file_mode_accepts_lang_but_uses_file_render(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            inp = Path(td) / "statement.html"
+            inp.write_text("<p>x</p>", encoding="utf-8")
+
+            out = io.StringIO()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(["statement-md", str(inp), "--lang", "english"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("# Description", out.getvalue())
+        self.assertIn("x", out.getvalue())
+
+    def test_statement_md_problem_dir_accepts_type_but_uses_dir_render(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "problems" / "a"
+            (base / "statement-sections" / "chinese").mkdir(parents=True)
+            (base / "problem.xml").write_text("<problem></problem>", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "legend.tex").write_text("中文题面", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "input.tex").write_text("中文输入", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "output.tex").write_text("中文输出", encoding="utf-8")
+
+            code = cli.main(["statement-md", str(base), "--type", "tex"])
+            rendered = (base / "problem_zh.md").read_text(encoding="utf-8")
+
+        self.assertEqual(code, 0)
+        self.assertIn("中文题面", rendered)
+        self.assertIn("# Format", rendered)
+        self.assertNotIn("# Description\n\n(Statement conversion fallback from TeX)", rendered)
+
+    def test_statement_md_problem_dir_auto_default_when_statements_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "problems" / "a"
+            (base / "statement-sections" / "chinese").mkdir(parents=True)
+            (base / "statement-sections" / "english").mkdir(parents=True)
+            (base / "problem.xml").write_text("<problem></problem>", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "legend.tex").write_text("中文题面", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "input.tex").write_text("中文输入", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "output.tex").write_text("中文输出", encoding="utf-8")
+            (base / "statement-sections" / "english" / "legend.tex").write_text("English statement", encoding="utf-8")
+            (base / "statement-sections" / "english" / "input.tex").write_text("Input format", encoding="utf-8")
+            (base / "statement-sections" / "english" / "output.tex").write_text("Output format", encoding="utf-8")
+
+            code = cli.main(["statement-md", str(base)])
+            rendered = (base / "problem_zh.md").read_text(encoding="utf-8")
+
+        self.assertEqual(code, 0)
+        self.assertIn("中文题面", rendered)
+        self.assertNotIn("English statement", rendered)
+
+    def test_statement_md_problem_dir_auto_falls_back_when_statements_dir_not_problems_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "custom" / "a"
+            (root / "statements" / "english").mkdir(parents=True)
+            (base / "statement-sections" / "chinese").mkdir(parents=True)
+            (base / "statement-sections" / "english").mkdir(parents=True)
+            (base / "problem.xml").write_text("<problem></problem>", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "legend.tex").write_text("中文题面", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "input.tex").write_text("中文输入", encoding="utf-8")
+            (base / "statement-sections" / "chinese" / "output.tex").write_text("中文输出", encoding="utf-8")
+            (base / "statement-sections" / "english" / "legend.tex").write_text("English statement", encoding="utf-8")
+            (base / "statement-sections" / "english" / "input.tex").write_text("Input format", encoding="utf-8")
+            (base / "statement-sections" / "english" / "output.tex").write_text("Output format", encoding="utf-8")
+
+            code = cli.main(["statement-md", str(base), "--lang", "auto"])
+            rendered = (base / "problem_zh.md").read_text(encoding="utf-8")
+
+        self.assertEqual(code, 0)
+        self.assertIn("中文题面", rendered)
+        self.assertNotIn("English statement", rendered)
+
+    def test_convert_explicit_run_doall(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_convert(**kwargs: object) -> ConvertSummary:
+            captured.update(kwargs)
+            return ConvertSummary(total=1, success=1, failed=0)
+
+        with mock.patch("p2h.cli.convert_contest", side_effect=fake_convert):
+            code = cli.main(["convert", "contest.zip", "-o", "out", "--pid-start", "P1000", "--run-doall"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["run_doall"], True)
+
+    def test_convert_invalid_missing_env_value_rejected(self) -> None:
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as cm:
+                cli.main(["convert", "contest.zip", "-o", "out", "--pid-start", "P1000", "--missing-env", "bad"])
+
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("invalid choice", err.getvalue())
+
+    def test_statement_md_invalid_type_value_rejected(self) -> None:
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as cm:
+                cli.main(["statement-md", "x.tex", "--type", "bad"])
+
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("invalid choice", err.getvalue())
+
+    def test_statement_md_invalid_lang_value_rejected(self) -> None:
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as cm:
+                cli.main(["statement-md", "x.tex", "--lang", "bad"])
+
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("invalid choice", err.getvalue())
+
+    def test_convert_invalid_pid_start_value_rejected(self) -> None:
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as cm:
+                cli.main(["convert", "contest.zip", "-o", "out", "--pid-start", "1000"])
+
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("--pid-start must look like P1145", err.getvalue())
+
+    def test_convert_only_accepts_comma_and_repeat(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_convert(**kwargs: object) -> ConvertSummary:
+            captured.update(kwargs)
+            return ConvertSummary(total=1, success=1, failed=0)
+
+        with mock.patch("p2h.cli.convert_contest", side_effect=fake_convert):
+            code = cli.main([
+                "convert",
+                "contest.zip",
+                "-o",
+                "out",
+                "--pid-start",
+                "P1000",
+                "--only",
+                "a,b",
+                "--only",
+                "c,d",
+            ])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["only_slugs"], ["a", "b", "c", "d"])
+
+    def test_convert_default_owner_tag_missing_env(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_convert(**kwargs: object) -> ConvertSummary:
+            captured.update(kwargs)
+            return ConvertSummary(total=1, success=1, failed=0)
+
+        with mock.patch("p2h.cli.convert_contest", side_effect=fake_convert):
+            code = cli.main(["convert", "contest.zip", "-o", "out", "--pid-start", "P1000"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["owner"], 1)
+        self.assertEqual(captured["tags"], [])
+        self.assertEqual(captured["missing_env_policy"], "warn")
+
     def test_statement_md_problem_dir_with_output(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
