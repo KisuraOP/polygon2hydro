@@ -66,6 +66,26 @@ class TestStatementMarkdown(unittest.TestCase):
         self.assertIn("1. alpha", md)
         self.assertIn("2. beta", md)
 
+    def test_tex_block_to_markdown_image_textwidth_width(self) -> None:
+        tex = r"""
+        \begin{center}
+        \includegraphics[width=0.8\textwidth]{harbin2.jpg}
+        \end{center}
+        """
+        md = tex_block_to_markdown(tex)
+        self.assertIn('<img src="file://harbin2.jpg" width="80%" />', md)
+        self.assertNotIn('<img src="file://harbin2.jpg"/>', md)
+
+    def test_tex_block_to_markdown_image_textwidth_non_integer_width(self) -> None:
+        tex = r"""
+        \begin{center}
+        \includegraphics[width=0.625\textwidth]{harbin3.jpg}
+        \end{center}
+        """
+        md = tex_block_to_markdown(tex)
+        self.assertIn('<img src="file://harbin3.jpg" width="62.5%" />', md)
+        self.assertNotIn('<img src="file://harbin3.jpg"/>', md)
+
     def test_tex_texttt_and_t_are_unified_to_math_texttt(self) -> None:
         tex = r"""
         \\t{Yes}

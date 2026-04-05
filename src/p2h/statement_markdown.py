@@ -23,10 +23,18 @@ def _strip_tex_comments(text: str) -> str:
 
 def _parse_includegraphics_width(opts: str) -> str | None:
     m = re.search(r"width\s*=\s*([0-9]+(?:\.[0-9]+)?\\?%)", opts)
+    if m:
+        return m.group(1).replace("\\", "")
+
+    m = re.search(r"width\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*\\textwidth\b", opts)
     if not m:
         return None
-    width = m.group(1).replace("\\", "")
-    return width
+
+    ratio = float(m.group(1))
+    pct = ratio * 100
+    if abs(pct - round(pct)) < 1e-9:
+        return f"{int(round(pct))}%"
+    return f"{pct:g}%"
 
 
 def _center_block_to_markdown(match: re.Match[str]) -> str:
