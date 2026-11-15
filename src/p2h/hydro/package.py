@@ -5,6 +5,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from p2h.kinds import ProblemKind
 from p2h.models import ProblemData
 
 
@@ -24,8 +25,12 @@ def write_problem_zip(
         root = Path(td) / str(local_id)
         (root / "testdata").mkdir(parents=True, exist_ok=True)
 
-        (root / "problem.yaml").write_text(_build_problem_yaml(pid, owner, problem.title, tags), encoding="utf-8")
-        (root / "problem_zh.md").write_text(problem.statement_md, encoding="utf-8")
+        # newline="\n" keeps the package byte-identical on Windows and POSIX:
+        # without it write_text() would translate \n to \r\n on Windows.
+        (root / "problem.yaml").write_text(
+            _build_problem_yaml(pid, owner, problem.title, tags), encoding="utf-8", newline="\n"
+        )
+        (root / "problem_zh.md").write_text(problem.statement_md, encoding="utf-8", newline="\n")
         (root / "testdata" / "config.yaml").write_text(
             _build_config_yaml(
                 problem.time_ms,
@@ -37,11 +42,12 @@ def write_problem_zip(
                     )
                     for case in problem.tests
                 ],
-                is_interactive=problem.is_interactive,
+                kind=problem.kind,
                 interactor_name=problem.interactor_name,
                 checker_name=problem.checker_name,
             ),
             encoding="utf-8",
+            newline="\n",
         )
 
         for case in problem.tests:
@@ -91,21 +97,21 @@ def _build_config_yaml(
     memory_mb: int | None,
     test_files: list[tuple[str, str]],
     *,
-    is_interactive: bool,
+    kind: ProblemKind,
     interactor_name: str | None,
     checker_name: str | None,
 ) -> str:
-    lines = ["type: interactive" if is_interactive else "type: default"]
-    if is_interactive:
-        if not interactor_name:
-            raise ValueError("interactive problem missing interactor source filename")
-        lines.append(f"interactor: {interactor_name}")
-    else:
+    lines = [f"type: {kind.hydro_type}"]
+    if kind.needs_checker:
         if not checker_name:
-            raise ValueError("traditional problem missing checker source filename")
+            raise ValueError(f"{kind.key} problem missing checker source filename")
         lines.append("checker_type: testlib")
         lines.append("checker:")
         lines.append(f"  file: {checker_name}")
+    if kind.needs_interactor:
+        if not interactor_name:
+            raise ValueError(f"{kind.key} problem missing interactor source filename")
+        lines.append(f"interactor: {interactor_name}")
     if time_ms is not None:
         lines.append(f"time: {time_ms}ms")
     if memory_mb is not None:

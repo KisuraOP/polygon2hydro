@@ -10,7 +10,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from p2h import polygon_reader as pr
+from p2h.polygon import archive
+from p2h.polygon import problem as pr
+from p2h.kinds import INTERACTIVE, TRADITIONAL
 
 
 class TestPolygonReader(unittest.TestCase):
@@ -46,7 +48,7 @@ class TestPolygonReader(unittest.TestCase):
             md, used_dir = pr._extract_statement_markdown(
                 base,
                 pr.ET.fromstring("<problem></problem>"),
-                is_interactive=False,
+                kind=TRADITIONAL,
                 statement_language="english",
             )
             self.assertIn("English description", md)
@@ -65,7 +67,7 @@ class TestPolygonReader(unittest.TestCase):
             md, used_dir = pr._extract_statement_markdown(
                 base,
                 pr.ET.fromstring("<problem></problem>"),
-                is_interactive=False,
+                kind=TRADITIONAL,
                 statement_language="english",
             )
             self.assertIn("中文题面", md)
@@ -94,7 +96,7 @@ class TestPolygonReader(unittest.TestCase):
             md, used_dir = pr._extract_statement_markdown(
                 base,
                 root,
-                is_interactive=False,
+                kind=TRADITIONAL,
                 statement_language="english",
             )
             self.assertIn("English statement", md)
@@ -152,7 +154,7 @@ class TestPolygonReader(unittest.TestCase):
             "problems/a/tests/1",
             "x/y",
         ]
-        self.assertEqual(pr.list_problem_slugs_from_names(names), ["a", "b"])
+        self.assertEqual(archive.list_slugs(names), ["a", "b"])
 
     def test_sections_to_markdown_template(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -169,7 +171,7 @@ class TestPolygonReader(unittest.TestCase):
             (d / "example.2").write_text("4\n", encoding="utf-8")
             (d / "example.2.a").write_text("5\n", encoding="utf-8")
 
-            md = pr._sections_to_markdown(d, is_interactive=False)
+            md = pr._sections_to_markdown(d, kind=TRADITIONAL)
 
             self.assertIn("# Description", md)
             self.assertIn("# Format", md)
@@ -191,7 +193,7 @@ class TestPolygonReader(unittest.TestCase):
             (d / "example.1").write_text("1\n", encoding="utf-8")
             (d / "example.1.a").write_text("2\n", encoding="utf-8")
 
-            md = pr._sections_to_markdown(d, is_interactive=True)
+            md = pr._sections_to_markdown(d, kind=INTERACTIVE)
 
             self.assertIn("# Description", md)
             self.assertIn("# Interaction", md)
@@ -200,7 +202,7 @@ class TestPolygonReader(unittest.TestCase):
             self.assertIn("```input1", md)
             self.assertIn("```output1", md)
 
-    def test_extract_interactive_meta(self) -> None:
+    def test_extract_interactor_name(self) -> None:
         root = pr.ET.fromstring(
             """
             <problem>
@@ -212,17 +214,13 @@ class TestPolygonReader(unittest.TestCase):
             </problem>
             """
         )
-        is_interactive, interactor_name = pr._extract_interactive_meta(root)
-        self.assertTrue(is_interactive)
-        self.assertEqual(interactor_name, "inter.cc")
+        self.assertEqual(pr._extract_interactor_name(root), "inter.cc")
 
-    def test_extract_interactive_meta_none(self) -> None:
+    def test_extract_interactor_name_none(self) -> None:
         root = pr.ET.fromstring("<problem></problem>")
-        is_interactive, interactor_name = pr._extract_interactive_meta(root)
-        self.assertFalse(is_interactive)
-        self.assertIsNone(interactor_name)
+        self.assertIsNone(pr._extract_interactor_name(root))
 
-    def test_extract_interactive_meta_without_source(self) -> None:
+    def test_extract_interactor_name_without_source(self) -> None:
         root = pr.ET.fromstring(
             """
             <problem>
@@ -232,9 +230,7 @@ class TestPolygonReader(unittest.TestCase):
             </problem>
             """
         )
-        is_interactive, interactor_name = pr._extract_interactive_meta(root)
-        self.assertTrue(is_interactive)
-        self.assertIsNone(interactor_name)
+        self.assertIsNone(pr._extract_interactor_name(root))
 
     def test_read_problem_interactive(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -354,7 +350,7 @@ class TestPolygonReader(unittest.TestCase):
             md, _ = pr._extract_statement_markdown(
                 base,
                 pr.ET.fromstring("<problem></problem>"),
-                is_interactive=True,
+                kind=INTERACTIVE,
                 statement_language=None,
             )
             self.assertIn("# Interaction", md)
@@ -372,7 +368,7 @@ class TestPolygonReader(unittest.TestCase):
             md, used_dir = pr._extract_statement_markdown(
                 base,
                 pr.ET.fromstring("<problem></problem>"),
-                is_interactive=False,
+                kind=TRADITIONAL,
                 statement_language=None,
             )
             self.assertIn("English description", md)
@@ -396,7 +392,7 @@ class TestPolygonReader(unittest.TestCase):
             md, used_dir = pr._extract_statement_markdown(
                 base,
                 pr.ET.fromstring("<problem></problem>"),
-                is_interactive=False,
+                kind=TRADITIONAL,
                 statement_language=None,
             )
             self.assertIn("中文题面", md)
@@ -422,7 +418,7 @@ class TestPolygonReader(unittest.TestCase):
             md, used_dir = pr._extract_statement_markdown(
                 base,
                 root,
-                is_interactive=False,
+                kind=TRADITIONAL,
                 statement_language=None,
             )
             self.assertIn("English only statement", md)
@@ -439,7 +435,7 @@ class TestPolygonReader(unittest.TestCase):
             md, used_dir = pr._extract_statement_markdown(
                 base,
                 pr.ET.fromstring("<problem></problem>"),
-                is_interactive=False,
+                kind=TRADITIONAL,
                 statement_language=None,
             )
             files = pr._extract_additional_files(base, used_dir)
@@ -495,6 +491,41 @@ class TestPolygonReader(unittest.TestCase):
             self.assertIn("dir/b.txt", names)
             self.assertNotIn("problem.tex", names)
 
+    def test_extract_additional_files_drops_editorial_and_polygon_internals(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            statement = base / "statement-sections" / "chinese"
+            statement.mkdir(parents=True)
+            for name in ("legend.tex", "notes.tex", "tutorial.tex", "tutorial.html", "problem-properties.json"):
+                (statement / name).write_text(name, encoding="utf-8")
+
+            files = pr._extract_additional_files(base, statement)
+            names = [n for n, _ in files]
+            self.assertIn("legend.tex", names)
+            self.assertIn("notes.tex", names)
+            self.assertNotIn("tutorial.tex", names)
+            self.assertNotIn("tutorial.html", names)
+            self.assertNotIn("problem-properties.json", names)
+
+    def test_extract_additional_files_keeps_whole_statement_source(self) -> None:
+        # Fallback path: the statement is converted from statements/<lang>/problem.tex,
+        # which is the least accurate conversion, so the raw source must be kept.
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            whole = base / "statements" / "chinese"
+            whole.mkdir(parents=True)
+            (whole / "problem.tex").write_text("整篇题面", encoding="utf-8")
+            (whole / "problem-properties.json").write_text("{}", encoding="utf-8")
+            (whole / "tutorial.tex").write_text("题解", encoding="utf-8")
+            (whole / "1.png").write_bytes(b"img")
+
+            files = pr._extract_additional_files(base, whole)
+            names = [n for n, _ in files]
+            self.assertIn("problem.tex", names)
+            self.assertIn("1.png", names)
+            self.assertNotIn("tutorial.tex", names)
+            self.assertNotIn("problem-properties.json", names)
+
     def test_extract_testdata_files_from_xml_declarations(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
@@ -528,7 +559,7 @@ class TestPolygonReader(unittest.TestCase):
                 """
             )
 
-            files = pr._extract_testdata_files(base, root, "blackorwhite", is_interactive=False)
+            files = pr._extract_testdata_files(base, root, "blackorwhite", kind=TRADITIONAL)
             names = [n for n, _ in files]
             self.assertEqual(names, ["gen_maxtime.cpp", "std.cpp", "val.cpp"])
 
@@ -562,7 +593,7 @@ class TestPolygonReader(unittest.TestCase):
             )
 
             with self.assertRaises(ValueError) as cm:
-                pr._extract_testdata_files(base, root, "dup", is_interactive=False)
+                pr._extract_testdata_files(base, root, "dup", kind=TRADITIONAL)
             self.assertIn("testdata filename collision after flatten", str(cm.exception))
 
     def test_extract_testdata_files_supports_direct_path_and_source(self) -> None:
@@ -590,7 +621,7 @@ class TestPolygonReader(unittest.TestCase):
                 """
             )
 
-            files = pr._extract_testdata_files(base, root, "mixed", is_interactive=False)
+            files = pr._extract_testdata_files(base, root, "mixed", kind=TRADITIONAL)
             names = [n for n, _ in files]
             self.assertEqual(names, ["gen_random.cpp", "std_ai.cpp"])
 
@@ -609,7 +640,7 @@ class TestPolygonReader(unittest.TestCase):
                 """
             )
             with self.assertRaises(ValueError) as cm:
-                pr._extract_testdata_files(base, root, "blackorwhite", is_interactive=False)
+                pr._extract_testdata_files(base, root, "blackorwhite", kind=TRADITIONAL)
             self.assertIn("declared testdata file not found", str(cm.exception))
 
     def test_extract_checker_name_from_source(self) -> None:
@@ -683,7 +714,7 @@ class TestPolygonReader(unittest.TestCase):
                 """
             )
 
-            files = pr._extract_testdata_files(base, root, "spj", is_interactive=False)
+            files = pr._extract_testdata_files(base, root, "spj", kind=TRADITIONAL)
             names = [n for n, _ in files]
             self.assertEqual(names, ["check.cpp", "checker123.cpp"])
 
@@ -712,7 +743,7 @@ class TestPolygonReader(unittest.TestCase):
                 """
             )
 
-            files = pr._extract_testdata_files(base, root, "same-source", is_interactive=False)
+            files = pr._extract_testdata_files(base, root, "same-source", kind=TRADITIONAL)
             names = [n for n, _ in files]
             self.assertEqual(names, ["checker.cpp"])
 
@@ -744,7 +775,7 @@ class TestPolygonReader(unittest.TestCase):
             )
 
             with self.assertRaises(ValueError) as cm:
-                pr._extract_testdata_files(base, root, "diff-source", is_interactive=False)
+                pr._extract_testdata_files(base, root, "diff-source", kind=TRADITIONAL)
             self.assertIn("testdata filename collision after flatten", str(cm.exception))
 
 

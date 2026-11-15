@@ -4,23 +4,13 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
+from p2h import kinds
 from p2h.models import ProblemData, TestCase
-from p2h.statement_markdown import html_to_markdown, tex_block_to_markdown, tex_to_markdown
+from p2h.polygon.markup import html_to_markdown, tex_block_to_markdown, tex_to_markdown
 
 
 def _normalize_newlines(text: str) -> str:
     return text.replace("\r\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
-
-
-def list_problem_slugs_from_names(names: list[str]) -> list[str]:
-    slugs: set[str] = set()
-    for name in names:
-        if not name.startswith("problems/"):
-            continue
-        parts = PurePosixPath(name).parts
-        if len(parts) >= 3:
-            slugs.add(parts[1])
-    return sorted(slugs)
 
 
 def read_problem(
@@ -38,25 +28,25 @@ def read_problem(
 
     title = _extract_title(root, statement_language=statement_language) or slug
     time_ms, memory_mb = _extract_limits(root)
-    is_interactive, interactor_name = _extract_interactive_meta(root)
+    kind = kinds.detect(root)
+    interactor_name = _extract_interactor_name(root)
     checker_name = _extract_checker_name(root)
-    if not is_interactive and not checker_name:
-        raise ValueError(f"{slug}: missing checker source in problem.xml assets/checker")
+    _check_required_sources(slug, kind, interactor_name=interactor_name, checker_name=checker_name)
 
     statement_md, statement_dir = _extract_statement_markdown(
         base,
         root,
-        is_interactive=is_interactive,
+        kind=kind,
         statement_language=statement_language,
     )
     tests = _extract_tests(base, slug)
     additional = _extract_additional_files(base, statement_dir)
-    testdata_files = _extract_testdata_files(base, root, slug, is_interactive=is_interactive)
+    testdata_files = _extract_testdata_files(base, root, slug, kind=kind)
 
     if verbose:
         print(
-            f"[{slug}] title={title} interactive={is_interactive} tests={len(tests)} additional={len(additional)} testdata_files={len(testdata_files)} "
-            f"time={time_ms}ms memory={memory_mb}MB"
+            f"[{slug}] title={title} kind={kind.key} tests={len(tests)} additional={len(additional)} "
+            f"testdata_files={len(testdata_files)} time={time_ms}ms memory={memory_mb}MB"
         )
 
     return ProblemData(
@@ -68,10 +58,24 @@ def read_problem(
         tests=tests,
         additional_files=additional,
         testdata_files=testdata_files,
-        is_interactive=is_interactive,
+        kind=kind,
         interactor_name=interactor_name,
         checker_name=checker_name,
     )
+
+
+def _check_required_sources(
+    slug: str,
+    kind: kinds.ProblemKind,
+    *,
+    interactor_name: str | None,
+    checker_name: str | None,
+) -> None:
+    """Refuse a package that does not declare what its kind needs to be judged."""
+    if kind.needs_checker and not checker_name:
+        raise ValueError(f"{slug}: missing checker source in problem.xml assets/checker")
+    if kind.needs_interactor and not interactor_name:
+        raise ValueError(f"{slug}: missing interactor source in problem.xml assets/interactor")
 
 
 def _language_priority(statement_language: str | None) -> tuple[str, ...]:
@@ -108,19 +112,19 @@ def _extract_limits(root: ET.Element) -> tuple[int | None, int | None]:
     return time_ms, memory_mb
 
 
-def _extract_interactive_meta(root: ET.Element) -> tuple[bool, str | None]:
+def _extract_interactor_name(root: ET.Element) -> str | None:
     interactor = root.find("./assets/interactor")
     if interactor is None:
-        return False, None
+        return None
 
     source = interactor.find("source")
     if source is None:
-        return True, None
+        return None
 
     rel = (source.attrib.get("path") or "").strip()
     if not rel:
-        return True, None
-    return True, PurePosixPath(rel).name
+        return None
+    return PurePosixPath(rel).name or None
 
 
 def _extract_checker_name(root: ET.Element) -> str | None:
@@ -143,13 +147,13 @@ def _extract_statement_markdown(
     base: Path,
     root: ET.Element,
     *,
-    is_interactive: bool,
+    kind: kinds.ProblemKind,
     statement_language: str | None,
 ) -> tuple[str, Path | None]:
     for lang in _language_priority(statement_language):
         sections_dir = base / "statement-sections" / lang
         if sections_dir.exists():
-            md = _sections_to_markdown(sections_dir, is_interactive=is_interactive)
+            md = _sections_to_markdown(sections_dir, kind=kind)
             if md.strip():
                 return md, sections_dir
 
@@ -185,7 +189,7 @@ def _extract_statement_markdown(
     return "# Description\n\n(Statement not found)\n", None
 
 
-def _sections_to_markdown(sections_dir: Path, *, is_interactive: bool) -> str:
+def _sections_to_markdown(sections_dir: Path, *, kind: kinds.ProblemKind) -> str:
     legend = _read_tex_file(sections_dir / "legend.tex")
     interaction = _read_tex_file(sections_dir / "interaction.tex")
     input_text = _read_tex_file(sections_dir / "input.tex")
@@ -195,7 +199,7 @@ def _sections_to_markdown(sections_dir: Path, *, is_interactive: bool) -> str:
     lines: list[str] = []
     lines.extend(["# Description", tex_block_to_markdown(legend) if legend else "(No description provided)", ""])
 
-    if is_interactive or interaction:
+    if kind.uses_interaction_section or interaction:
         lines.extend(["# Interaction", tex_block_to_markdown(interaction) if interaction else "(No interaction provided)", ""])
     else:
         lines.extend(["# Format", ""])
@@ -306,16 +310,56 @@ def _extract_tests(base: Path, slug: str) -> list[TestCase]:
     return cases
 
 
+# Shipped as ``additional_file/`` attachments, so anything here is downloadable
+# by contestants: the editorial must never leak.
+_EDITORIAL_FILENAMES = {
+    "tutorial.tex",
+    "tutorial.html",
+}
+
+# Polygon bookkeeping, not part of the statement.
+_POLYGON_INTERNAL_FILENAMES = {
+    "problem-properties.json",
+}
+
+# Only used to render the HTML statement; the markdown statement never needs it.
+_RENDERER_ONLY_FILENAMES = {
+    "problem-statement.css",
+}
+
+# A whole-statement source. Kept only when the statement really came from it,
+# i.e. the directory is ``statements/<lang>`` rather than a section directory.
+_WHOLE_STATEMENT_FILENAMES = {
+    "problem.tex",
+    "problem.html",
+}
+
+
 def _extract_additional_files(base: Path, statement_dir: Path | None) -> list[tuple[str, bytes]]:
+    """Collect the files shipped as ``additional_file/`` attachments.
+
+    Raw statement sources are kept on purpose: tex/html -> markdown is
+    best-effort, so the original source stays around for manual comparison.
+    Editorial content and Polygon internals are dropped, and a whole-statement
+    source is only kept on the fallback path that actually reads it.
+    """
     out: dict[str, bytes] = {}
 
     if statement_dir is not None and statement_dir.exists():
+        # ``statements/<lang>`` holds one whole statement file; a
+        # ``statement-sections/<lang>`` directory holds per-section sources.
+        is_whole_statement_dir = statement_dir.parent.name == "statements"
         for path in statement_dir.iterdir():
             if not path.is_file():
                 continue
-            if path.name in {"problem.tex", "problem.html", "problem-statement.css"}:
+            name = path.name
+            if name in _EDITORIAL_FILENAMES or name in _POLYGON_INTERNAL_FILENAMES:
                 continue
-            out.setdefault(path.name, path.read_bytes())
+            if name in _RENDERER_ONLY_FILENAMES:
+                continue
+            if name in _WHOLE_STATEMENT_FILENAMES and not is_whole_statement_dir:
+                continue
+            out.setdefault(name, path.read_bytes())
 
     attach_dir = base / "attachments"
     if attach_dir.exists():
@@ -328,7 +372,7 @@ def _extract_additional_files(base: Path, statement_dir: Path | None) -> list[tu
     return sorted(out.items(), key=lambda x: x[0])
 
 
-def _extract_testdata_files(base: Path, root: ET.Element, slug: str, *, is_interactive: bool) -> list[tuple[str, bytes]]:
+def _extract_testdata_files(base: Path, root: ET.Element, slug: str, *, kind: kinds.ProblemKind) -> list[tuple[str, bytes]]:
     out: dict[str, bytes] = {}
     out_sources: dict[str, str] = {}
 
@@ -369,7 +413,7 @@ def _extract_testdata_files(base: Path, root: ET.Element, slug: str, *, is_inter
         if rel:
             _add_rel_path(rel)
 
-    if not is_interactive:
+    if kind.needs_checker:
         checker = root.find("./assets/checker")
         if checker is not None:
             rel = _declared_source_path(checker)

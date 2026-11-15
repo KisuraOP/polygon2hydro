@@ -5,13 +5,33 @@ import re
 import sys
 from pathlib import Path
 
-from p2h import __version__
-from p2h.convert import _detect_contest_statement_language, convert_contest
-from p2h.polygon_reader import _extract_interactive_meta, _extract_statement_markdown
-from p2h.statement_markdown import html_to_markdown, tex_block_to_markdown, tex_to_markdown
+from p2h import __version__, kinds
+from p2h.pipeline import convert_contest
+from p2h.polygon.markup import html_to_markdown, tex_block_to_markdown, tex_to_markdown
+from p2h.polygon.problem import _extract_statement_markdown
+from p2h.polygon.statement import detect_contest_language
 
 
 _PID_RE = re.compile(r"^([A-Za-z]+)(\d+)$")
+
+
+def _ensure_utf8_output() -> None:
+    """Force UTF-8 for redirected output, whatever the console code page is.
+
+    On a Chinese Windows console ``sys.stdout.encoding`` is cp936, so piping the
+    log into a file produces GBK bytes that Linux/CI/editors read as mojibake.
+    Interactive consoles are left untouched: there the Windows console API
+    already handles Unicode, and forcing UTF-8 would garble legacy consoles.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None:
+            continue
+        try:
+            if stream.isatty():
+                continue
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            continue
 
 
 def _parse_pid_start(value: str) -> tuple[str, int, int]:
@@ -58,6 +78,15 @@ def build_parser() -> argparse.ArgumentParser:
         default="warn",
         help="behavior when doall precheck finds missing tools: warn (default), ask, or error",
     )
+    p_convert.add_argument(
+        "--interactive-runner",
+        choices=["auto", "package", "crossrun"],
+        default="auto",
+        help=(
+            "how to generate answers for interactive problems: auto (package script, "
+            "CrossRun.jar as fallback; default), package (script only), crossrun (jar only)"
+        ),
+    )
 
     p_stmt = sub.add_parser("statement-md", help="convert statement source (html/tex) to markdown")
     p_stmt.add_argument("input_path", type=Path)
@@ -99,7 +128,7 @@ def _resolve_statement_language_for_problem_dir(problem_dir: Path, lang: str) ->
 
     if problem_dir.parent.name == "problems":
         work_root = problem_dir.parent.parent
-        return _detect_contest_statement_language(work_root)
+        return detect_contest_language(work_root)
     return None
 
 
@@ -112,17 +141,17 @@ def _render_statement_markdown_from_problem_dir(problem_dir: Path, lang: str) ->
 
     root = ET.fromstring(xml_path.read_bytes())
     statement_language = _resolve_statement_language_for_problem_dir(problem_dir, lang)
-    is_interactive, _ = _extract_interactive_meta(root)
     md, _ = _extract_statement_markdown(
         problem_dir,
         root,
-        is_interactive=is_interactive,
+        kind=kinds.detect(root),
         statement_language=statement_language,
     )
     return md
 
 
 def main(argv: list[str] | None = None) -> int:
+    _ensure_utf8_output()
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -141,12 +170,14 @@ def main(argv: list[str] | None = None) -> int:
             run_doall=args.run_doall,
             verbose=args.verbose,
             missing_env_policy=args.missing_env,
+            interactive_runner=args.interactive_runner,
         )
+        had_error = bool(summary.failed or summary.errors)
         print(
             f"done: total={summary.total} success={summary.success} failed={summary.failed}",
-            file=sys.stderr if summary.failed else sys.stdout,
+            file=sys.stderr if had_error else sys.stdout,
         )
-        if summary.failed:
+        if had_error:
             for line in summary.errors:
                 print(f"- {line}", file=sys.stderr)
             return 1
@@ -155,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         if _is_problem_directory(args.input_path):
             rendered = _render_statement_markdown_from_problem_dir(args.input_path, args.lang)
             output_path = args.output or (args.input_path / "problem_zh.md")
-            output_path.write_text(rendered, encoding="utf-8")
+            output_path.write_text(rendered, encoding="utf-8", newline="\n")
             return 0
 
         if args.input_path.is_dir():
@@ -172,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.output is None:
             sys.stdout.write(rendered)
         else:
-            args.output.write_text(rendered, encoding="utf-8")
+            args.output.write_text(rendered, encoding="utf-8", newline="\n")
         return 0
 
     return 0

@@ -9,7 +9,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from p2h.statement_markdown import html_to_markdown, tex_block_to_markdown, tex_to_markdown
+from p2h.polygon.markup import html_to_markdown, tex_block_to_markdown, tex_to_markdown
 
 
 class TestStatementMarkdown(unittest.TestCase):

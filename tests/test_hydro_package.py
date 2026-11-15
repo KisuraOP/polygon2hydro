@@ -11,8 +11,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from p2h.hydro_writer import write_problem_zip
+from p2h.hydro.package import write_problem_zip
 from p2h.models import ProblemData, TestCase
+from p2h.kinds import INTERACTIVE, TRADITIONAL
 
 
 class TestHydroWriter(unittest.TestCase):
@@ -94,7 +95,7 @@ class TestHydroWriter(unittest.TestCase):
                 memory_mb=256,
                 statement_md="# Description\n\n# Interaction\n\n# Samples\n",
                 tests=[TestCase(index=1, input_data=b"1\n", output_data=b"2\n")],
-                is_interactive=True,
+                kind=INTERACTIVE,
                 interactor_name="inter.cc",
                 checker_name=None,
             )
@@ -135,7 +136,7 @@ class TestHydroWriter(unittest.TestCase):
                 memory_mb=256,
                 statement_md="# Description\n",
                 tests=[TestCase(index=1, input_data=b"1\n", output_data=b"2\n")],
-                is_interactive=True,
+                kind=INTERACTIVE,
                 interactor_name=None,
                 checker_name=None,
             )
@@ -187,6 +188,29 @@ class TestHydroWriter(unittest.TestCase):
             self.assertEqual(first.name, "同名题目.zip")
             self.assertEqual(second.name, "同名题目 (2).zip")
 
+    def test_generated_text_uses_lf_on_every_platform(self) -> None:
+        # Windows write_text() would otherwise emit CRLF, making the package
+        # differ byte-for-byte between hosts.
+        with tempfile.TemporaryDirectory() as td:
+            problem = ProblemData(
+                slug="demo",
+                title="题目A",
+                time_ms=1000,
+                memory_mb=256,
+                statement_md="# Description\n\nhello\n",
+                tests=[TestCase(index=1, input_data=b"1\n", output_data=b"2\n")],
+                checker_name="check.cpp",
+            )
+            zip_path = write_problem_zip(
+                problem=problem, output_dir=Path(td) / "out", local_id=1,
+                pid="P1000", owner=1, tags=["t"],
+            )
+            with zipfile.ZipFile(zip_path) as zf:
+                for name in ("1/problem.yaml", "1/problem_zh.md", "1/testdata/config.yaml"):
+                    data = zf.read(name)
+                    self.assertNotIn(b"\r\n", data, name)
+                    self.assertIn(b"\n", data, name)
+
     def test_write_problem_zip_traditional_missing_checker_raises(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             out_dir = Path(td) / "out"
@@ -197,7 +221,7 @@ class TestHydroWriter(unittest.TestCase):
                 memory_mb=256,
                 statement_md="# Description\n",
                 tests=[TestCase(index=1, input_data=b"1\n", output_data=b"2\n")],
-                is_interactive=False,
+                kind=TRADITIONAL,
                 checker_name=None,
             )
 

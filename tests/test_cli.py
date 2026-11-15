@@ -14,7 +14,43 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from p2h import cli
-from p2h.convert import ConvertSummary
+from p2h.pipeline import ConvertSummary
+
+
+class TestUtf8Output(unittest.TestCase):
+    class _FakeStream:
+        def __init__(self, tty: bool) -> None:
+            self._tty = tty
+            self.calls: list[dict] = []
+
+        def isatty(self) -> bool:
+            return self._tty
+
+        def reconfigure(self, **kwargs) -> None:
+            self.calls.append(kwargs)
+
+    def test_redirected_streams_are_switched_to_utf8(self) -> None:
+        out, err = self._FakeStream(False), self._FakeStream(False)
+        with mock.patch("sys.stdout", out), mock.patch("sys.stderr", err):
+            cli._ensure_utf8_output()
+        expected = [{"encoding": "utf-8", "errors": "replace"}]
+        self.assertEqual(out.calls, expected)
+        self.assertEqual(err.calls, expected)
+
+    def test_interactive_console_is_left_alone(self) -> None:
+        out, err = self._FakeStream(True), self._FakeStream(True)
+        with mock.patch("sys.stdout", out), mock.patch("sys.stderr", err):
+            cli._ensure_utf8_output()
+        self.assertEqual(out.calls, [])
+        self.assertEqual(err.calls, [])
+
+    def test_stream_without_reconfigure_does_not_raise(self) -> None:
+        class Bare:
+            def isatty(self) -> bool:
+                return False
+
+        with mock.patch("sys.stdout", Bare()), mock.patch("sys.stderr", Bare()):
+            cli._ensure_utf8_output()
 
 
 class TestCliHelpers(unittest.TestCase):
@@ -493,6 +529,20 @@ class TestCliMain(unittest.TestCase):
         self.assertIn("p2h version:", out.getvalue())
         self.assertIn("done: total=1 success=0 failed=1", err.getvalue())
         self.assertIn("- x: bad", err.getvalue())
+
+    def test_main_returns_error_code_when_only_errors_present(self) -> None:
+        # e.g. an invalid contest zip: 0 problems processed, but the run failed
+        with mock.patch(
+            "p2h.cli.convert_contest",
+            return_value=ConvertSummary(total=0, success=0, failed=0, errors=["invalid contest zip: x"]),
+        ):
+            out = io.StringIO()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(["convert", "contest.zip", "-o", "out", "--pid-start", "P1000"])
+
+        self.assertEqual(code, 1)
+        self.assertIn("- invalid contest zip: x", err.getvalue())
 
 
 if __name__ == "__main__":

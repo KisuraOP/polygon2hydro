@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from p2h.kinds import TRADITIONAL, ProblemKind
+
 
 @dataclass(slots=True)
 class TestCase:
@@ -22,6 +24,11 @@ class ProblemData:
     tests: list[TestCase] = field(default_factory=list)
     additional_files: list[tuple[str, bytes]] = field(default_factory=list)
     testdata_files: list[tuple[str, bytes]] = field(default_factory=list)
-    is_interactive: bool = False
+    kind: ProblemKind = TRADITIONAL
     interactor_name: str | None = None
     checker_name: str | None = None
+
+    @property
+    def is_interactive(self) -> bool:
+        """Convenience predicate; prefer reading ``kind`` flags directly."""
+        return self.kind.answer_source == "interactor"

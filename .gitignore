@@ -4,7 +4,7 @@ __pycache__/
 *$py.class
 
 # Packaging
-build/
+/build/
 dist/
 *.egg-info/
 
@@ -25,7 +25,8 @@ htmlcov/
 .idea/
 .vscode/
 
-# Claude/local tooling
+# Agent/contributor conventions, kept local until mature
+AGENTS.md
 .claude/
 CLAUDE.md
 

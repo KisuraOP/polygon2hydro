@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import os
-import stat
 import sys
 import tempfile
 import unittest
@@ -16,13 +14,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from p2h.convert import (
-    _confirm_continue_after_missing_env,
-    _detect_contest_statement_language,
-    _make_scripts_executable,
-    _safe_extract_contest_zip,
-    convert_contest,
-)
+from p2h.pipeline import convert_contest
+from p2h.polygon.archive import safe_extract
+from p2h.polygon.statement import detect_contest_language
 from p2h.models import ProblemData, TestCase
 
 
@@ -54,16 +48,16 @@ def _build_minimal_contest_zip(path: Path, slugs: list[str]) -> None:
 
 
 class TestConvert(unittest.TestCase):
-    def test_detect_contest_statement_language(self) -> None:
+    def testdetect_contest_language(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            self.assertIsNone(_detect_contest_statement_language(root))
+            self.assertIsNone(detect_contest_language(root))
 
             (root / "statements" / "english").mkdir(parents=True)
-            self.assertEqual(_detect_contest_statement_language(root), "english")
+            self.assertEqual(detect_contest_language(root), "english")
 
             (root / "statements" / "chinese").mkdir(parents=True)
-            self.assertEqual(_detect_contest_statement_language(root), "chinese")
+            self.assertEqual(detect_contest_language(root), "chinese")
 
     def test_convert_passes_statement_language_to_read_problem(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -83,8 +77,8 @@ class TestConvert(unittest.TestCase):
                 checker_name="check.cpp",
             )
 
-            with mock.patch("p2h.convert.read_problem", return_value=fake_problem) as mocked_read, mock.patch(
-                "p2h.convert.write_problem_zip", return_value=Path(td) / "out.zip"
+            with mock.patch("p2h.pipeline.read_problem", return_value=fake_problem) as mocked_read, mock.patch(
+                "p2h.pipeline.write_problem_zip", return_value=Path(td) / "out.zip"
             ):
                 convert_contest(
                     contest_zip=contest_zip,
@@ -119,8 +113,8 @@ class TestConvert(unittest.TestCase):
                 checker_name="check.cpp",
             )
 
-            with mock.patch("p2h.convert.read_problem", return_value=fake_problem) as mocked_read, mock.patch(
-                "p2h.convert.write_problem_zip", return_value=Path(td) / "out.zip"
+            with mock.patch("p2h.pipeline.read_problem", return_value=fake_problem) as mocked_read, mock.patch(
+                "p2h.pipeline.write_problem_zip", return_value=Path(td) / "out.zip"
             ):
                 convert_contest(
                     contest_zip=contest_zip,
@@ -152,8 +146,8 @@ class TestConvert(unittest.TestCase):
                 checker_name="check.cpp",
             )
 
-            with mock.patch("p2h.convert.read_problem", return_value=fake_problem) as mocked_read, mock.patch(
-                "p2h.convert.write_problem_zip", return_value=Path(td) / "out.zip"
+            with mock.patch("p2h.pipeline.read_problem", return_value=fake_problem) as mocked_read, mock.patch(
+                "p2h.pipeline.write_problem_zip", return_value=Path(td) / "out.zip"
             ):
                 convert_contest(
                     contest_zip=contest_zip,
@@ -169,7 +163,7 @@ class TestConvert(unittest.TestCase):
             kwargs = mocked_read.call_args.kwargs
             self.assertIsNone(kwargs["statement_language"])
 
-    def test_safe_extract_contest_zip_blocks_parent_escape(self) -> None:
+    def testsafe_extract_blocks_parent_escape(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             bad_zip = Path(td) / "bad.zip"
             with zipfile.ZipFile(bad_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -177,7 +171,7 @@ class TestConvert(unittest.TestCase):
 
             with tempfile.TemporaryDirectory() as out_td:
                 with self.assertRaises(ValueError) as cm:
-                    _safe_extract_contest_zip(bad_zip, Path(out_td))
+                    safe_extract(bad_zip, Path(out_td))
                 self.assertIn("unsafe path", str(cm.exception))
 
     def test_convert_logs_progress(self) -> None:
@@ -196,8 +190,8 @@ class TestConvert(unittest.TestCase):
                 checker_name="check.cpp",
             )
 
-            with mock.patch("p2h.convert.read_problem", return_value=fake_problem), mock.patch(
-                "p2h.convert.write_problem_zip", return_value=Path(td) / "out.zip"
+            with mock.patch("p2h.pipeline.read_problem", return_value=fake_problem), mock.patch(
+                "p2h.pipeline.write_problem_zip", return_value=Path(td) / "out.zip"
             ):
                 out = io.StringIO()
                 with contextlib.redirect_stdout(out):
@@ -235,7 +229,7 @@ class TestConvert(unittest.TestCase):
                 )
 
             with mock.patch("shutil.which", return_value="/usr/bin/fake"), mock.patch(
-                "p2h.convert._run_doall_for_all"
+                "p2h.pipeline.run_doall_for_all"
             ):
                 summary = convert_contest(
                     contest_zip=contest_zip,
@@ -282,7 +276,7 @@ class TestConvert(unittest.TestCase):
 
             with mock.patch("shutil.which", return_value=None), mock.patch(
                 "builtins.input", return_value="y"
-            ), mock.patch("p2h.convert._run_doall_for_all"):
+            ), mock.patch("p2h.pipeline.run_doall_for_all"):
                 summary = convert_contest(
                     contest_zip=contest_zip,
                     output_dir=Path(td) / "out",
@@ -319,12 +313,6 @@ class TestConvert(unittest.TestCase):
 
             self.assertEqual(summary.failed, 1)
             self.assertTrue(any("user aborted" in e for e in summary.errors))
-
-    def test_confirm_continue_after_missing_env(self) -> None:
-        with mock.patch("builtins.input", return_value="yes"):
-            self.assertTrue(_confirm_continue_after_missing_env(["wine"]))
-        with mock.patch("builtins.input", return_value="N"):
-            self.assertFalse(_confirm_continue_after_missing_env(["wine"]))
 
     def test_unknown_only_slug_returns_error(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -363,9 +351,9 @@ class TestConvert(unittest.TestCase):
                 checker_name="check.cpp",
             )
 
-            with mock.patch("p2h.convert.read_problem", return_value=fake_problem), mock.patch(
-                "p2h.convert.write_problem_zip", return_value=Path(td) / "out.zip"
-            ), mock.patch("p2h.convert._run_doall_for_all") as run_doall:
+            with mock.patch("p2h.pipeline.read_problem", return_value=fake_problem), mock.patch(
+                "p2h.pipeline.write_problem_zip", return_value=Path(td) / "out.zip"
+            ), mock.patch("p2h.pipeline.run_doall_for_all") as run_doall:
                 convert_contest(
                     contest_zip=contest_zip,
                     output_dir=Path(td) / "out",
@@ -378,9 +366,9 @@ class TestConvert(unittest.TestCase):
                 )
                 run_doall.assert_called_once()
 
-            with mock.patch("p2h.convert.read_problem", return_value=fake_problem), mock.patch(
-                "p2h.convert.write_problem_zip", return_value=Path(td) / "out.zip"
-            ), mock.patch("p2h.convert._run_doall_for_all") as run_doall:
+            with mock.patch("p2h.pipeline.read_problem", return_value=fake_problem), mock.patch(
+                "p2h.pipeline.write_problem_zip", return_value=Path(td) / "out.zip"
+            ), mock.patch("p2h.pipeline.run_doall_for_all") as run_doall:
                 convert_contest(
                     contest_zip=contest_zip,
                     output_dir=Path(td) / "out2",
@@ -411,8 +399,8 @@ class TestConvert(unittest.TestCase):
                     additional_files=[],
                 )
 
-            with mock.patch("p2h.convert.read_problem", side_effect=fake_read), mock.patch(
-                "p2h.convert.write_problem_zip", return_value=Path(td) / "out.zip"
+            with mock.patch("p2h.pipeline.read_problem", side_effect=fake_read), mock.patch(
+                "p2h.pipeline.write_problem_zip", return_value=Path(td) / "out.zip"
             ):
                 summary = convert_contest(
                     contest_zip=contest_zip,
@@ -430,28 +418,44 @@ class TestConvert(unittest.TestCase):
             self.assertEqual(summary.failed, 1)
             self.assertTrue(any("b: boom" in e for e in summary.errors))
 
-    def test_make_scripts_executable(self) -> None:
+    def test_convert_keeps_going_when_one_problem_doall_fails(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            files = [
-                root / "doall.sh",
-                root / "scripts" / "x.sh",
-                root / "files" / "gen.exe",
-                root / "solutions" / "std",
-                root / "check.exe",
-                root / "statements" / "a.sh",
-                root / "statement-sections" / "b.sh",
-            ]
-            for p in files:
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text("echo ok\n", encoding="utf-8")
-                p.chmod(0o644)
+            contest_zip = Path(td) / "contest.zip"
+            _build_minimal_contest_zip(contest_zip, ["a", "b"])
 
-            _make_scripts_executable(root)
+            fake_problem = ProblemData(
+                slug="a",
+                title="A",
+                time_ms=1000,
+                memory_mb=256,
+                statement_md="# Description\n",
+                tests=[TestCase(index=1, input_data=b"1\n", output_data=b"1\n")],
+                additional_files=[],
+                checker_name="check.cpp",
+            )
 
-            for p in files:
-                mode = p.stat().st_mode
-                self.assertTrue(mode & stat.S_IXUSR, p)
+            def fake_read(root: Path, slug: str, *, verbose: bool = False, statement_language: str | None = None) -> ProblemData:
+                if slug == "b":
+                    raise ValueError("missing answer for test key 01")
+                return fake_problem
+
+            with mock.patch("p2h.pipeline.read_problem", side_effect=fake_read), mock.patch(
+                "p2h.pipeline.write_problem_zip", return_value=Path(td) / "out.zip"
+            ), mock.patch("p2h.pipeline.run_doall_for_all", return_value={"b": "exit code 2"}):
+                summary = convert_contest(
+                    contest_zip=contest_zip,
+                    output_dir=Path(td) / "out",
+                    pid_prefix="P",
+                    pid_start_num=1000,
+                    pid_width=4,
+                    owner=1,
+                    tags=[],
+                    run_doall=True,
+                )
+
+            self.assertEqual(summary.success, 1)
+            self.assertEqual(summary.failed, 1)
+            self.assertTrue(any("doall failed: exit code 2" in e for e in summary.errors))
 
 
 if __name__ == "__main__":
