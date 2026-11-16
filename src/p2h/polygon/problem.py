@@ -38,6 +38,8 @@ def read_problem(
     interactor_source, checker_source = _extract_embedded_sources(
         base, root, slug, kind=kind
     )
+    interactor_source_type = _declared_source_type(root.find("./assets/interactor"))
+    checker_source_type = _declared_source_type(root.find("./assets/checker"))
 
     statement_md, statement_dir = _extract_statement_markdown(
         base,
@@ -71,6 +73,8 @@ def read_problem(
         interactor_runs=judging_info.interactor_runs,
         interactor_source=interactor_source,
         checker_source=checker_source,
+        interactor_source_type=interactor_source_type,
+        checker_source_type=checker_source_type,
     )
 
 
@@ -150,6 +154,16 @@ def _declared_source_path(node: ET.Element) -> str:
     if source is None:
         return ""
     return (source.attrib.get("path") or "").strip()
+
+
+def _declared_source_type(node: ET.Element | None) -> str | None:
+    """Polygon's declared language for an asset source, e.g. ``cpp.g++17``."""
+    if node is None:
+        return None
+    source = node.find("source")
+    value = (source.attrib.get("type") if source is not None else node.attrib.get("type")) or ""
+    value = value.strip()
+    return value or None
 
 
 def _language_priority(statement_language: str | None) -> tuple[str, ...]:

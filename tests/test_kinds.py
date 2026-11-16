@@ -71,13 +71,21 @@ class TestCommunicationKind(unittest.TestCase):
 
     def test_communication_flags(self) -> None:
         kind = kinds.COMMUNICATION
+        # Hydro's native sequential multi-run judging: the generated interactor
+        # emulates one Polygon run per multi_pass pass.
         self.assertEqual(kind.hydro_type, "interactive")
+        self.assertTrue(kind.needs_multi_pass)
         self.assertTrue(kind.needs_interactor)
         self.assertTrue(kind.needs_checker)
-        self.assertEqual(kind.answer_source, "twopass")
         self.assertFalse(kind.uses_interaction_section)
-        self.assertTrue(kind.accepts(2))
+        self.assertEqual(kind.answer_source, "twopass")
         self.assertFalse(kind.accepts(1))
+        self.assertTrue(kind.accepts(2))
+        self.assertTrue(kind.accepts(5))
+
+    def test_only_communication_needs_multi_pass(self) -> None:
+        self.assertFalse(kinds.TRADITIONAL.needs_multi_pass)
+        self.assertFalse(kinds.INTERACTIVE.needs_multi_pass)
 
     def test_by_key(self) -> None:
         self.assertIs(kinds.by_key("communication"), kinds.COMMUNICATION)

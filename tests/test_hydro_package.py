@@ -12,7 +12,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from p2h.hydro import run_twice
-from p2h.hydro.package import write_problem_zip
+from p2h.hydro.package import source_lang, write_problem_zip
 from p2h.models import ProblemData, TestCase
 from p2h.kinds import COMMUNICATION, INTERACTIVE, TRADITIONAL
 
@@ -75,6 +75,7 @@ class TestHydroWriter(unittest.TestCase):
                 self.assertIn("checker_type: testlib", config_yaml)
                 self.assertIn("checker:", config_yaml)
                 self.assertIn("  file: check.cpp", config_yaml)
+                self.assertIn("  lang: cc", config_yaml)
                 self.assertIn("subtasks:", config_yaml)
                 self.assertIn("  - score: 100", config_yaml)
                 self.assertIn("    if: []", config_yaml)
@@ -98,6 +99,7 @@ class TestHydroWriter(unittest.TestCase):
                 tests=[TestCase(index=1, input_data=b"1\n", output_data=b"2\n")],
                 kind=INTERACTIVE,
                 interactor_name="inter.cc",
+                interactor_source="#include \"testlib.h\"\nint main() { return 0; }\n",
                 checker_name=None,
             )
 
@@ -113,7 +115,9 @@ class TestHydroWriter(unittest.TestCase):
             with zipfile.ZipFile(zip_path) as zf:
                 config_yaml = zf.read("1/testdata/config.yaml").decode()
                 self.assertIn("type: interactive", config_yaml)
-                self.assertIn("interactor: inter.cc", config_yaml)
+                self.assertIn("interactor:", config_yaml)
+                self.assertIn("  file: inter.cc", config_yaml)
+                self.assertIn("  lang: cc", config_yaml)
                 self.assertIn("time: 1000ms", config_yaml)
                 self.assertIn("memory: 256MB", config_yaml)
                 self.assertNotIn("checker_type:", config_yaml)
@@ -238,7 +242,7 @@ class TestHydroWriter(unittest.TestCase):
             self.assertIn("traditional problem missing checker source filename", str(cm.exception))
 
 
-class TestRunTwicePackage(unittest.TestCase):
+class TestCommunicationPackage(unittest.TestCase):
     def _problem(self, **overrides) -> ProblemData:
         fields = dict(
             slug="interval-sum",
@@ -246,14 +250,17 @@ class TestRunTwicePackage(unittest.TestCase):
             time_ms=1000,
             memory_mb=1024,
             statement_md="# Description\n\n# Format\n",
-            tests=[TestCase(index=1, input_data=b"cat 1\n", output_data=b"5\n")],
+            tests=[
+                TestCase(index=1, input_data=b"cat 1\n", output_data=b"5\n"),
+                TestCase(index=2, input_data=b"cat 2\n", output_data=b"7\n"),
+            ],
             kind=COMMUNICATION,
             interactor_name="inter.cpp",
             checker_name="check.cpp",
             run_count=2,
             interactor_runs=frozenset({1}),
-            interactor_source="#include \"testlib.h\"\nint main() { return 0; }\n",
-            checker_source="#include \"testlib.h\"\nint main() { return 0; }\n",
+            interactor_source='#include "testlib.h"\nint main() { return 0; }\n',
+            checker_source='#include "testlib.h"\nint main() { return 0; }\n',
         )
         fields.update(overrides)
         return ProblemData(**fields)
@@ -269,32 +276,54 @@ class TestRunTwicePackage(unittest.TestCase):
             tags=[],
         )
 
-    def test_config_runs_the_generated_interactor_multiple_times(self) -> None:
+    def test_config_uses_interactive_with_multi_pass(self) -> None:
         zip_path = self._write(self._problem())
         with zipfile.ZipFile(zip_path) as zf:
             config = zf.read("1/testdata/config.yaml").decode()
             self.assertIn("type: interactive", config)
             self.assertIn("multi_pass: 2", config)
-            self.assertIn("interactor: p2h_interactor.cpp", config)
-            # Hydro's interactive judge never reads a ``checker`` entry: the
-            # checker source is embedded into the generated interactor instead.
+            self.assertIn("interactor: p2h_interactor.cc.cc14o2", config)
+            # Answers travel through the normal case output files; no manager
+            # and no judge_extra_files are needed.
+            self.assertNotIn("manager:", config)
+            self.assertNotIn("num_processes:", config)
+            self.assertNotIn("judge_extra_files:", config)
             self.assertNotIn("checker_type:", config)
             self.assertNotIn("checker:", config)
+            self.assertIn("      - input: tests01.in", config)
+            self.assertIn("        output: tests01.out", config)
 
             names = set(zf.namelist())
-            self.assertIn("1/testdata/p2h_interactor.cpp", names)
-            adapter = zf.read("1/testdata/p2h_interactor.cpp").decode()
+            self.assertIn("1/testdata/p2h_interactor.cc.cc14o2", names)
+            self.assertIn("1/testdata/tests01.out", names)
+            self.assertIn("1/testdata/tests02.out", names)
+            self.assertNotIn("1/testdata/p2h_manager.cpp", names)
+            self.assertNotIn("1/testdata/p2h_ans_1", names)
+            self.assertEqual(zf.read("1/testdata/tests01.out"), b"5\n")
+            adapter = zf.read("1/testdata/p2h_interactor.cc.cc14o2").decode()
             self.assertIn("constexpr int kRunCount = 2;", adapter)
             self.assertIn("constexpr unsigned kInteractiveMask = 1u;", adapter)
-            self.assertIn("nextpass.in", adapter)
+            self.assertIn('std::getenv("HYDRO_MULTI_PASS")', adapter)
+
+    def test_adapter_uses_the_declared_language_variant(self) -> None:
+        zip_path = self._write(
+            self._problem(
+                interactor_source_type="cpp.gcc14-64-msys2-g++23",
+                checker_source_type="cpp.g++17",
+            )
+        )
+        with zipfile.ZipFile(zip_path) as zf:
+            config = zf.read("1/testdata/config.yaml").decode()
+            self.assertIn("interactor: p2h_interactor.cc.cc20o2", config)
+            self.assertIn("1/testdata/p2h_interactor.cc.cc20o2", zf.namelist())
 
     def test_adapter_is_deterministic(self) -> None:
         first = self._write(self._problem())
         second = self._write(self._problem())
         with zipfile.ZipFile(first) as a, zipfile.ZipFile(second) as b:
             self.assertEqual(
-                a.read("1/testdata/p2h_interactor.cpp"),
-                b.read("1/testdata/p2h_interactor.cpp"),
+                a.read("1/testdata/p2h_interactor.cc.cc14o2"),
+                b.read("1/testdata/p2h_interactor.cc.cc14o2"),
             )
 
     def test_missing_sources_are_reported(self) -> None:
@@ -312,7 +341,8 @@ class TestRunTwicePackage(unittest.TestCase):
 
     def test_adapter_filename_collision_is_reported(self) -> None:
         zip_dir = tempfile.mkdtemp()
-        problem = self._problem(testdata_files=[(run_twice.ADAPTER_FILENAME, b"taken")])
+        name = run_twice.adapter_filename(run_twice.adapter_lang(None))
+        problem = self._problem(testdata_files=[(name, b"taken")])
         with self.assertRaises(ValueError) as cm:
             write_problem_zip(
                 problem=problem,
@@ -336,6 +366,29 @@ class TestRunTwicePackage(unittest.TestCase):
                 tags=[],
             )
         self.assertIn("at least 2 runs", str(cm.exception))
+
+    def test_too_many_runs_are_reported(self) -> None:
+        # Hydro's problem config schema caps multi_pass at 20.
+        zip_dir = tempfile.mkdtemp()
+        with self.assertRaises(ValueError) as cm:
+            write_problem_zip(
+                problem=self._problem(run_count=21, interactor_runs=frozenset({1})),
+                output_dir=Path(zip_dir) / "out",
+                local_id=1,
+                pid="P4000",
+                owner=1,
+                tags=[],
+            )
+        self.assertIn("at most 20 passes", str(cm.exception))
+
+
+class TestSourceLang(unittest.TestCase):
+    def test_known_suffixes(self) -> None:
+        self.assertEqual(source_lang("check.cpp"), "cc")
+        self.assertEqual(source_lang("run.CC"), "cc")
+        self.assertEqual(source_lang("Main.java"), "java")
+        self.assertEqual(source_lang("checker.pas"), "pas")
+        self.assertEqual(source_lang("empty"), "cc")
 
 
 if __name__ == "__main__":

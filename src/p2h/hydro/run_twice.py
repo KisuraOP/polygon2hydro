@@ -1,14 +1,20 @@
 """Generate the Hydro interactor that judges a Polygon run-twice problem.
 
-Hydro has no first-class "run the participant twice" problem type.  What it has
-is ``multi_pass``: for ``type: interactive`` problems the interactor is restarted
-for every pass, and it can hand the next pass's input back through a file called
-``nextpass.in``.  One pass corresponds to one *run* of a Polygon run-twice
+Hydro's native representation of a sequential multi-run problem is the
+``multi_pass`` option: for ``type: interactive`` problems the judge restarts the
+interactor once per pass, and the interactor can hand the next pass's input back
+through ``nextpass.in``.  One pass corresponds to one *run* of a Polygon run-twice
 problem, so a converted problem is:
 
     type: interactive
     multi_pass: <run-count>
-    interactor: p2h_interactor.cpp
+    interactor: p2h_interactor.cc.<lang>
+
+Polygon's expected answers (the ``.a``/``.out`` files produced by running the
+model solution through all runs) stay in the normal testdata ``output`` files.
+Hydro's interactive judge passes that expected answer to the interactor as its
+third argument (``/w/out``) on every pass, so the generated program can run the
+problem's own checker without inventing extra testdata files.
 
 The generated program reproduces Polygon's judging model.  Every run has one
 input file; runs listed in the problem's ``<interactor><runs>`` are
@@ -37,7 +43,10 @@ with "returned 9").  The relay buffers whatever the participant writes, so the
 interactor always makes progress.
 
 Both the original interactor and the original checker are embedded verbatim,
-with their ``main`` renamed, so their behaviour stays Polygon's.
+with their ``main`` renamed, so their behaviour stays Polygon's.  The generated
+interactor is named ``p2h_interactor.cc.<lang>``: Hydro derives the compile
+language from the filename suffix (``.cc.cc17o2`` -> ``cc.cc17o2``), which is
+how the official Hydro communication example ships its manager source as well.
 """
 
 from __future__ import annotations
@@ -45,14 +54,74 @@ from __future__ import annotations
 import re
 
 
-ADAPTER_FILENAME = "p2h_interactor.cpp"
+ADAPTER_BASENAME = "p2h_interactor"
 
 INTERACTOR_ENTRY = "p2h_polygon_interactor_entry"
 CHECKER_ENTRY = "p2h_polygon_checker_entry"
 
 _BUNDLE_MAGIC = "P2H1"
 
+#: Hydro's problem-config schema caps ``multi_pass`` at 20.
+_MAX_MULTI_PASS = 20
+
 _INCLUDE_RE = re.compile(r"^\s*#\s*include\b")
+
+
+def _polygon_cpp_language(source_type: str) -> tuple[int, str]:
+    """Map a Polygon source type to (standard rank, Hydro language id).
+
+    The generated adapter embeds the problem's interactor and checker in one
+    translation unit, so it has to be compiled with a standard new enough for
+    both, and with optimisations: Hydro's stock ``cc`` has no ``-O2`` while
+    run-twice interactors can be CPU heavy.  Stock Hydro ships the ``cc.ccXXo2``
+    variants, so no judge configuration is needed.
+    """
+    lowered = source_type.strip().lower()
+    if not lowered:
+        return (1, "cc.cc14o2")
+    if not any(token in lowered for token in ("c++", "g++", "cpp", "gcc")):
+        raise ValueError(
+            f"run-twice problem has a non-C++ interactor/checker source type "
+            f"{source_type!r}; only C++ sources can be embedded in the Hydro adapter"
+        )
+    if "g++23" in lowered or "g++20" in lowered or "++23" in lowered or "++20" in lowered:
+        return (4, "cc.cc20o2")
+    if "g++17" in lowered or "++17" in lowered:
+        return (3, "cc.cc17o2")
+    if "g++14" in lowered or "++14" in lowered:
+        return (2, "cc.cc14o2")
+    if "g++11" in lowered or "++11" in lowered:
+        return (1, "cc.cc11o2")
+    if "g++98" in lowered or "++98" in lowered:
+        return (0, "cc.cc98o2")
+    return (2, "cc.cc14o2")
+
+
+def adapter_lang(*source_types: str | None) -> str:
+    """Pick the Hydro language for the generated interactor."""
+    ranked = [
+        _polygon_cpp_language(source_type)
+        for source_type in source_types
+        if source_type is not None
+    ]
+    if not ranked:
+        return "cc.cc14o2"
+    return max(ranked)[1]
+
+
+def adapter_filename(lang: str) -> str:
+    """Filename that makes Hydro detect ``lang`` from the suffix chain.
+
+    ``compileLocalFile`` tries suffixes from the right: for
+    ``p2h_interactor.cc.cc17o2`` it first looks up ``cc17o2`` (unknown), then
+    ``cc.cc17o2`` (known).  This mirrors the official communication example,
+    which names its manager source ``manager.cc.cc17o2``.
+    """
+    if lang == "cc":
+        return f"{ADAPTER_BASENAME}.cc"
+    if lang.startswith("cc."):
+        return f"{ADAPTER_BASENAME}.cc.{lang[3:]}"
+    raise ValueError(f"unsupported run-twice adapter language: {lang!r}")
 
 
 def build_adapter_source(
@@ -65,6 +134,10 @@ def build_adapter_source(
     """Compose the single C++ file Hydro will compile as the interactor."""
     if run_count < 2:
         raise ValueError(f"run-twice adapter needs at least 2 runs, got {run_count}")
+    if run_count > _MAX_MULTI_PASS:
+        raise ValueError(
+            f"run-twice adapter supports at most {_MAX_MULTI_PASS} passes, got {run_count}"
+        )
     runs = sorted(set(interactor_runs))
     if not runs:
         raise ValueError("run-twice adapter needs at least one interactive run")

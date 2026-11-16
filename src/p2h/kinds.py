@@ -6,20 +6,24 @@ expected next. Instead of growing ``if is_interactive`` branches in the reader,
 the writer and the build code, every difference is described once, here, as
 data:
 
-=====================  ============  =========  ==========  =============
-kind                   hydro type    checker    interactor  answer source
-=====================  ============  =========  ==========  =============
-``traditional``        default       required   absent      one solution per test
-``interactive``        interactive   absent     required    one dialogue per test
-``communication``      interactive   embedded   required    one dialogue per run
-=====================  ============  =========  ==========  =============
+=====================  ===============  =========  ==========  =============
+kind                   hydro type       checker    interactor  answer source
+=====================  ===============  =========  ==========  =============
+``traditional``        default          required   absent      one solution per test
+``interactive``        interactive      absent     required    one dialogue per test
+``communication``      interactive      embedded   generated   one dialogue per run
+=====================  ===============  =========  ==========  =============
 
 ``communication`` is Polygon's run-twice problem: ``run-count`` runs per test,
 some of them interactive, with a checker that sees the last run (see
-:mod:`p2h.polygon.judging`). Hydro judges it through ``multi_pass``, so the
-checker is not a separate program but part of the generated interactor:
-``needs_checker`` stays true because the source is still required, while only a
-kind without an interactor writes a ``checker`` entry into the Hydro config.
+:mod:`p2h.polygon.judging`).  Hydro's native representation of sequential
+multi-run problems is the ``multi_pass`` option of the ``interactive`` type: the
+judge restarts the interactor once per pass, hands the expected answer (the
+normal testdata ``output`` file) to it every pass, and forwards ``nextpass.in``
+as the next pass's input.  A generated interactor emulates one Polygon run per
+pass and embeds the problem's own interactor and checker (see
+:mod:`p2h.hydro.run_twice`).  ``needs_checker`` stays true because the checker
+source is still required, even though the Hydro config carries no ``checker``.
 
 Adding a kind means adding one :class:`ProblemKind` instance with the right
 flags (and, if its answers cannot come from a single solution, a new answer
@@ -57,6 +61,10 @@ class ProblemKind:
     marker: str | None = None
     min_run_count: int = 1
     max_run_count: int | None = None
+    #: Hydro's native sequential multi-run judging (``multi_pass``): a generated
+    #: interactor emulates one Polygon run per pass and the expected answer is
+    #: delivered through the normal testdata ``output`` file.
+    needs_multi_pass: bool = False
 
     def accepts(self, run_count: int) -> bool:
         if run_count < self.min_run_count:
@@ -95,6 +103,7 @@ COMMUNICATION = ProblemKind(
     answer_source="twopass",
     marker="./assets/interactor",
     min_run_count=2,
+    needs_multi_pass=True,
 )
 
 #: Detection order: the first kind whose marker and run count match wins.

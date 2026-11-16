@@ -35,8 +35,12 @@ class ProblemData:
     #: Hydro adapter for a run-twice problem.
     interactor_source: str | None = None
     checker_source: str | None = None
+    #: Polygon's declared language for those sources (``problem.xml`` source
+    #: ``type``), used to pick a Hydro compile language for the adapter.
+    interactor_source_type: str | None = None
+    checker_source_type: str | None = None
 
     @property
     def is_interactive(self) -> bool:
         """True when the participant talks to an interactor (any kind)."""
-        return self.kind.hydro_type == "interactive"
+        return self.kind.needs_interactor
