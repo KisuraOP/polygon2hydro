@@ -32,6 +32,8 @@ p2h convert contest-56961.zip -o out --pid-start P2000
 | `--tag` | 题目标签，可重复 |
 | `--only` | 只转指定 slug，可重复或用逗号分隔 |
 | `--no-run-doall` | 不执行包内构建脚本，直接用已有测试 |
+| `--missing-env` | 缺少构建工具时的行为：`warn`（默认）/ `ask` / `error` |
+| `--interactive-runner` | 交互题答案生成方式：`auto`（默认）/ `package` / `crossrun` |
 | `--verbose` | 输出详细日志 |
 
 常用：
@@ -44,7 +46,9 @@ p2h convert contest-56961.zip -o out --pid-start P2000 --tag "校赛" --tag "202
 p2h convert contest-56961.zip -o out --pid-start P2000 --only buy-cpu --only kettle,magic
 ```
 
-默认会执行包内的构建脚本（`doall`）生成测试与答案。**只对可信来源的包启用**；`--no-run-doall` 可跳过。
+默认会执行包内的构建脚本（`doall`）生成测试与答案，**只对可信来源的包启用**；
+`--no-run-doall` 可跳过。某题失败时会逐条列出原因并继续处理其它题，退出码为 `1`；
+命令行参数错误退出码为 `2`。其它选项见 `p2h convert --help`。
 
 ## 输出
 
@@ -76,8 +80,8 @@ Polygon 的通信题（`run-count > 1`）让选手程序按顺序运行多轮，
 构建时会被临时屏蔽。
 
 限制：只支持带 interactor 的通信题；生成答案需要包内的标程与 interactor `.exe`
-（Linux 上经 `wine` 运行，与交互题一致）。交互轮多一层沙箱管道，flush 极多的题在本地
-Hydro 可能要放宽时限配置，见 `AGENTS.md`。
+（Linux 上经 `wine` 运行，与交互题一致）。交互轮多一层沙箱管道，flush 极多的题在
+Hydro 侧可能需要适当放宽时限。
 
 ## 单独转题面
 
@@ -92,6 +96,8 @@ p2h statement-md problems/a/statement-sections/chinese/legend.tex --type tex-blo
 p2h statement-md problems/a
 ```
 
+`--lang` 选择题面语言（`auto` / `chinese` / `english`），`--type` 指定输入格式（`auto` / `html` / `tex` / `tex-block`）。
+
 ## 环境要求
 
 | 环境 | 构建脚本 | 额外依赖 |
@@ -100,12 +106,3 @@ p2h statement-md problems/a
 | Linux / macOS | `doall.sh` | `wine`（个别题目还需 `java`） |
 
 `--verbose` 会打印本机使用的入口。转换结果在两个平台上完全一致。
-
-## 常见问题
-
-- `unknown slug(s)`：`--only` 里的 slug 不在包中。
-- `missing answer for test key ...`：缺答案文件，确认构建脚本能正常执行，或先在 Polygon 侧生成测试。
-- 交互题在受限环境（服务账户、CI 沙箱）构建失败时，会自动改用包内的 `CrossRun.jar`，需要 `java`。
-- 通信题缺可执行标程 / interactor 时无法生成答案，转换会报 `cannot generate run-twice answers`；
-  此时确认包内有 `solutions/*.exe` 与 `files/interactor.exe`（Linux 上还需要 `wine`）。
-- 无效 zip、未知 slug 等错误返回退出码 `1`；命令行参数错误返回 `2`。
