@@ -18,6 +18,7 @@ from p2h.polygon.markup.blocks import (
     epigraph_to_markdown,
     itemize_to_markdown,
     section_commands_to_markdown,
+    tabular_to_markdown,
 )
 from p2h.polygon.markup.inline import image_block, inline_to_markdown
 from p2h.polygon.markup.math import (
@@ -31,6 +32,7 @@ from p2h.polygon.markup.text import normalize_newlines, strip_comments, strip_ta
 
 
 _CENTER = r"\\begin\{center\}(.*?)\\end\{center\}"
+_TABULAR = r"\\begin\{tabular\}\{([^}]*)\}(.*?)\\end\{tabular\}"
 _ENUMERATE = r"\\begin\{enumerate\}(.*?)\\end\{enumerate\}"
 _ITEMIZE = r"\\begin\{itemize\}(.*?)\\end\{itemize\}"
 _CODE = r"\\begin\{(verbatim|lstlisting|BVerbatim)\}(?:\[[^\]]*\])?(.*?)\\end\{\1\}"
@@ -60,6 +62,9 @@ def _replace_blocks(text: str, *, lists: bool = True, center: bool = False) -> s
         s = re.sub(_ITEMIZE, itemize_to_markdown, s, flags=re.S)
     s = re.sub(_CODE, code_block_to_markdown, s, flags=re.S)
     s = re.sub(_MATH_BLOCK, equation_block_to_markdown, s, flags=re.S)
+    # ``center`` may hold a tabular; the center stage keeps non-image content so
+    # the table reaches this stage instead of being dropped with the wrapper.
+    s = re.sub(_TABULAR, tabular_to_markdown, s, flags=re.S)
     s = section_commands_to_markdown(s)
     return normalize_display_math(s)
 

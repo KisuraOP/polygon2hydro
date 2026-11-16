@@ -360,5 +360,84 @@ def _strip_math(markdown: str) -> str:
     return re.sub(r"\$[^$\n]*\$", "", text)
 
 
+class TestTablesAndNestedEmphasis(unittest.TestCase):
+    """Content shapes found in contest-65134's statements."""
+
+    def test_nested_textbf_does_not_leak(self) -> None:
+        tex = (
+            r"\textbf{应特别注意\textbf{音高类别}和\textbf{音级}的格式，"
+            r"且本题涉及的英文字母均为大写。}"
+        )
+        md = tex_block_to_markdown(tex)
+        self.assertNotIn(r"\textbf", md)
+        # Bold inside bold is flattened: the outer delimiter already covers
+        # the entire sentence, as the author wrote it.
+        self.assertEqual(
+            md,
+            "**应特别注意音高类别和音级的格式，且本题涉及的英文字母均为大写。**",
+        )
+
+    def test_nested_emph_inside_textbf(self) -> None:
+        md = tex_block_to_markdown(r"\textbf{注意\textit{这里}的格式}")
+        self.assertNotIn(r"\textbf", md)
+        self.assertNotIn(r"\textit", md)
+        self.assertIn("注意", md)
+        self.assertIn("这里", md)
+
+    def test_center_with_image_definition_and_text_keeps_all(self) -> None:
+        tex = r"""
+        \begin{center}
+            \def \htmlPixelsInCm {45}
+            \includegraphics[width=5cm]{image3.png}
+        \end{center}
+        """
+        md = tex_block_to_markdown(tex)
+        self.assertIn('<img src="file://image3.png"/>', md)
+        self.assertNotIn(r"\def", md)
+        self.assertNotIn("htmlPixelsInCm", md)
+
+    def test_center_with_table_is_not_dropped(self) -> None:
+        tex = r"""
+        对应关系如下表所示：
+
+        \begin{center}
+        \begin{tabular}{|c|c|c|}
+        \hline
+        编号 & 1 & 2 \\
+        \hline
+        音级 & I & \#I \\
+        \hline
+        \end{tabular}
+        \end{center}
+        """
+        md = tex_block_to_markdown(tex)
+        self.assertIn("对应关系如下表所示", md)
+        self.assertIn("| 编号 | 1 | 2 |", md)
+        self.assertIn("| 音级 | I | \\#I |", md)
+        self.assertNotIn(r"\begin{tabular}", md)
+        self.assertNotIn(r"\hline", md)
+
+    def test_plain_table_outside_center(self) -> None:
+        tex = r"""
+        \begin{tabular}{|l|l|}
+        a & b \\
+        c & d \\
+        \end{tabular}
+        """
+        md = tex_block_to_markdown(tex)
+        self.assertIn("| a | b |", md)
+        self.assertIn("| c | d |", md)
+
+    def test_single_column_tabular_falls_back_to_text(self) -> None:
+        tex = r"""
+        \begin{tabular}{|c|}
+        only line \\
+        \end{tabular}
+        """
+        md = tex_block_to_markdown(tex)
+        self.assertNotIn(r"\begin{tabular}", md)
+        self.assertIn("only line", md)
+
+
 if __name__ == "__main__":
     unittest.main()

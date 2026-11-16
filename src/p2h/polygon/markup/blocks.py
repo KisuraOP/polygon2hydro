@@ -5,16 +5,34 @@ from __future__ import annotations
 import re
 
 from p2h.polygon.markup.inline import image_block, parse_image_width
-from p2h.polygon.markup.text import normalize_newlines
+from p2h.polygon.markup.text import (
+    find_matching_brace,
+    normalize_newlines,
+    strip_tex_definitions,
+)
 
 
 def center_to_markdown(match: re.Match[str]) -> str:
-    """Turn a ``center`` environment holding images into centered image blocks."""
-    images = re.findall(r"\\includegraphics(?:\[([^\]]*)\])?\{([^}]+)\}", match.group(1))
-    if not images:
-        return ""
+    """Convert a ``center`` environment, keeping its images and other content.
 
-    blocks = [image_block(source, parse_image_width(options or "")) for options, source in images]
+    A ``center`` block holds images most of the time, but also tables, ``\\def``
+    definitions and plain text (real case: a reference table inside ``center``).
+    Dropping the non-image part silently deletes statement content, so the
+    remaining text is passed on to the later block stages.
+    """
+    body = match.group(1)
+    blocks = [
+        image_block(source, parse_image_width(options or ""))
+        for options, source in re.findall(
+            r"\\includegraphics(?:\[([^\]]*)\])?\{([^}]+)\}", body
+        )
+    ]
+    remaining = re.sub(r"\\includegraphics(?:\[[^\]]*\])?\{[^}]+\}", "", body)
+    remaining = strip_tex_definitions(remaining).strip()
+    if remaining:
+        blocks.append(remaining)
+    if not blocks:
+        return ""
     return "\n" + "\n\n".join(blocks) + "\n"
 
 
@@ -66,26 +84,43 @@ def code_block_to_markdown(match: re.Match[str]) -> str:
     return f"\n```text\n{body}\n```\n"
 
 
+def tabular_to_markdown(match: re.Match[str]) -> str:
+    """Convert a ``tabular`` environment to a markdown table.
+
+    The column spec is ignored: markdown has no alignment/rule control, and the
+    usual statement table is a simple grid.  ``\\hline`` disappears, and
+    ``\\multicolumn`` falls back to its text.  A table with a single row (or no
+    ``&`` at all) is kept as plain text rather than forced into a table.
+    """
+    body = match.group(2)
+    body = re.sub(
+        r"\\multicolumn\{[^}]*\}\{[^}]*\}\{([^{}]*)\}", r"\1", body
+    )
+    rows: list[list[str]] = []
+    for raw in re.split(r"\\\\", body):
+        raw = re.sub(r"\\hline", "", raw).strip()
+        if not raw:
+            continue
+        cells = [re.sub(r"\s+", " ", cell).strip() for cell in re.split(r"(?<!\\)&", raw)]
+        rows.append(cells)
+
+    if len(rows) < 2 or max(len(row) for row in rows) < 2:
+        return "\n" + "\n\n".join(" ".join(row) for row in rows) + "\n"
+
+    width = max(len(row) for row in rows)
+    rows = [row + [""] * (width - len(row)) for row in rows]
+    lines = [
+        "| " + " | ".join(rows[0]) + " |",
+        "| " + " | ".join("---" for _ in range(width)) + " |",
+    ]
+    for row in rows[1:]:
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n" + "\n".join(lines) + "\n"
+
+
 def _find_matching_brace(text: str, open_index: int) -> int | None:
     """Index of the ``}`` matching the ``{`` at ``open_index``."""
-    if open_index < 0 or open_index >= len(text) or text[open_index] != "{":
-        return None
-
-    depth = 0
-    i = open_index
-    while i < len(text):
-        char = text[i]
-        if char == "\\":
-            i += 2
-            continue
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return i
-        i += 1
-    return None
+    return find_matching_brace(text, open_index)
 
 
 def epigraph_to_markdown(text: str) -> str:
