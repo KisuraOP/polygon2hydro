@@ -412,10 +412,12 @@ _WHOLE_STATEMENT_FILENAMES = {
 def _extract_additional_files(base: Path, statement_dir: Path | None) -> list[tuple[str, bytes]]:
     """Collect the files shipped as ``additional_file/`` attachments.
 
-    Raw statement sources are kept on purpose: tex/html -> markdown is
-    best-effort, so the original source stays around for manual comparison.
-    Editorial content and Polygon internals are dropped, and a whole-statement
-    source is only kept on the fallback path that actually reads it.
+    Only files the statement may actually reference are shipped: images and
+    other attachments.  Raw TeX sources are conversion input, not problem
+    assets, so they are dropped here -- shipping them would publish the source
+    in the problem's download list.  Editorial content and Polygon internals are
+    dropped for the same reason, and a whole HTML statement is only kept on the
+    fallback path that actually reads it.
     """
     out: dict[str, bytes] = {}
 
@@ -443,7 +445,9 @@ def _extract_additional_files(base: Path, statement_dir: Path | None) -> list[tu
             rel = path.relative_to(attach_dir).as_posix()
             out.setdefault(rel, path.read_bytes())
 
-    return sorted(out.items(), key=lambda x: x[0])
+    return sorted(
+        (name, data) for name, data in out.items() if not name.lower().endswith(".tex")
+    )
 
 
 def _extract_testdata_files(base: Path, root: ET.Element, slug: str, *, kind: kinds.ProblemKind) -> list[tuple[str, bytes]]:

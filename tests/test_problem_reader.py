@@ -444,7 +444,8 @@ class TestPolygonReader(unittest.TestCase):
             self.assertIn("English statement", md)
             self.assertEqual(used_dir, en)
             self.assertIn("figure.png", names)
-            self.assertIn("legend.tex", names)
+            # The TeX source is conversion input; it must not be downloadable.
+            self.assertNotIn("legend.tex", names)
 
     def test_extract_tests_reindex_and_errors(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -492,6 +493,27 @@ class TestPolygonReader(unittest.TestCase):
             self.assertIn("dir/b.txt", names)
             self.assertNotIn("problem.tex", names)
 
+    def test_extract_additional_files_drops_all_tex_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            statement = base / "statement-sections" / "chinese"
+            statement.mkdir(parents=True)
+            for name in ("legend.tex", "notes.tex", "input.tex", "output.tex", "LEGACY.TEX"):
+                (statement / name).write_text(name, encoding="utf-8")
+            (statement / "figure.png").write_bytes(b"img")
+
+            attach = base / "attachments"
+            attach.mkdir(parents=True)
+            (attach / "extra.tex").write_text("attachment source", encoding="utf-8")
+            (attach / "extra.txt").write_text("keep", encoding="utf-8")
+
+            files = pr._extract_additional_files(base, statement)
+            names = [n for n, _ in files]
+            self.assertIn("figure.png", names)
+            self.assertIn("extra.txt", names)
+            for name in ("legend.tex", "notes.tex", "input.tex", "output.tex", "LEGACY.TEX", "extra.tex"):
+                self.assertNotIn(name, names)
+
     def test_extract_additional_files_drops_editorial_and_polygon_internals(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
@@ -499,31 +521,36 @@ class TestPolygonReader(unittest.TestCase):
             statement.mkdir(parents=True)
             for name in ("legend.tex", "notes.tex", "tutorial.tex", "tutorial.html", "problem-properties.json"):
                 (statement / name).write_text(name, encoding="utf-8")
+            (statement / "figure.png").write_bytes(b"img")
 
             files = pr._extract_additional_files(base, statement)
             names = [n for n, _ in files]
-            self.assertIn("legend.tex", names)
-            self.assertIn("notes.tex", names)
+            self.assertIn("figure.png", names)
+            self.assertNotIn("legend.tex", names)
+            self.assertNotIn("notes.tex", names)
             self.assertNotIn("tutorial.tex", names)
             self.assertNotIn("tutorial.html", names)
             self.assertNotIn("problem-properties.json", names)
 
-    def test_extract_additional_files_keeps_whole_statement_source(self) -> None:
-        # Fallback path: the statement is converted from statements/<lang>/problem.tex,
-        # which is the least accurate conversion, so the raw source must be kept.
+    def test_extract_additional_files_whole_statement_keeps_only_assets(self) -> None:
+        # Fallback path: the statement is converted from statements/<lang>/problem.tex.
+        # The source is conversion input, so it is not shipped either; the HTML
+        # whole-statement source is still kept because it may be linked.
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             whole = base / "statements" / "chinese"
             whole.mkdir(parents=True)
             (whole / "problem.tex").write_text("整篇题面", encoding="utf-8")
+            (whole / "problem.html").write_text("<p>整篇题面</p>", encoding="utf-8")
             (whole / "problem-properties.json").write_text("{}", encoding="utf-8")
             (whole / "tutorial.tex").write_text("题解", encoding="utf-8")
             (whole / "1.png").write_bytes(b"img")
 
             files = pr._extract_additional_files(base, whole)
             names = [n for n, _ in files]
-            self.assertIn("problem.tex", names)
             self.assertIn("1.png", names)
+            self.assertIn("problem.html", names)
+            self.assertNotIn("problem.tex", names)
             self.assertNotIn("tutorial.tex", names)
             self.assertNotIn("problem-properties.json", names)
 

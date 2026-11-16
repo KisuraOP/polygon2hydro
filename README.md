@@ -60,11 +60,11 @@ p2h convert contest-56961.zip -o out --pid-start P2000 --only buy-cpu --only ket
     │   ├── check.cpp
     │   └── ...
     └── additional_file/
-        ├── 1.png
-        └── legend.tex
+        └── 1.png
 ```
 
 把每个 zip 直接导入 Hydro 即可。同名题目不会覆盖，会依次命名为 `题目名 (2).zip`。
+`additional_file/` 只放题面实际引用的附件（图片等）；题面 `.tex` 源文件只用于转换，不会打包进去。
 
 ## 通信题（run-twice）
 
