@@ -8,7 +8,7 @@
 ## 安装
 
 ```bash
-python3 -m pip install -e .
+python -m pip install -e .
 ```
 
 不安装也可以直接运行：
@@ -36,7 +36,7 @@ p2h convert contest-56961.zip -o out --pid-start P2000
 | `--only` | 只转指定 slug，可重复或用逗号分隔 |
 | `--no-run-doall` | 不执行包内构建脚本，直接用已有测试；通信题需要构建阶段重算答案，不建议跳过 |
 | `--missing-env` | 缺少构建工具时的行为：`warn`（默认）/ `ask` / `error` |
-| `--interactive-runner` | 交互题答案生成：`auto`（默认，包内脚本失败时回退 `CrossRun.jar`）/ `package`（只用包内脚本）/ `crossrun`（只用 `CrossRun.jar`） |
+| `--interactive-runner` | 交互题答案生成：`auto`（默认，包内脚本失败时回退 `CrossRun.jar`）/ `package`（只用包内脚本）/ `crossrun`（优先 `CrossRun.jar`，不可用时仍走包内脚本） |
 | `--verbose` | 输出详细日志（含本机使用的构建入口） |
 
 常用：
@@ -78,7 +78,7 @@ p2h convert contest-56961.zip -o out --pid-start P2000 --only buy-cpu --only ket
 
 ```bash
 # 转单个文件，输出到 stdout
-p2h statement-md problems/a/statements/chinese/problem.html
+p2h statement-md problems/a/statements/.html/chinese/problem.html
 
 # 转 TeX 片段（如 legend.tex）
 p2h statement-md problems/a/statement-sections/chinese/legend.tex --type tex-block -o legend.md
