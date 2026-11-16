@@ -447,6 +447,19 @@ class TestPolygonReader(unittest.TestCase):
             # The TeX source is conversion input; it must not be downloadable.
             self.assertNotIn("legend.tex", names)
 
+    def test_extract_tests_normalizes_crlf(self) -> None:
+        # Polygon packages exported on Windows carry CRLF test data; Hydro judges
+        # on Linux, where getline-based solutions would read the \r.
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            t = base / "tests"
+            t.mkdir()
+            (t / "01").write_bytes(b"1\r\n2\r\n")
+            (t / "01.a").write_bytes(b"3\r\n")
+            cases = pr._extract_tests(base, "s")
+            self.assertEqual(cases[0].input_data, b"1\n2\n")
+            self.assertEqual(cases[0].output_data, b"3\n")
+
     def test_extract_tests_reindex_and_errors(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

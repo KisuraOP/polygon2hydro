@@ -319,6 +319,18 @@ def _read_tex_file(path: Path) -> str:
     return _normalize_newlines(path.read_text(encoding="utf-8", errors="ignore")).strip()
 
 
+def _normalize_test_bytes(data: bytes) -> bytes:
+    """Normalise CRLF test data to LF.
+
+    Polygon packages exported on Windows contain CRLF input/output files; Hydro
+    judges run on Linux, where solutions that use ``getline`` see the ``\\r``
+    and break (real case: compile-by-command's model solution).  Both the input
+    and the expected output are normalised so the package behaves identically on
+    every host.
+    """
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def _extract_tests(base: Path, slug: str) -> list[TestCase]:
     test_dir = base / "tests"
     ins: dict[str, tuple[str, bytes]] = {}
@@ -375,8 +387,8 @@ def _extract_tests(base: Path, slug: str) -> list[TestCase]:
         cases.append(
             TestCase(
                 index=new_idx,
-                input_data=input_item[1],
-                output_data=output_item[1],
+                input_data=_normalize_test_bytes(input_item[1]),
+                output_data=_normalize_test_bytes(output_item[1]),
                 input_name=input_name,
                 output_name=output_name,
             )
