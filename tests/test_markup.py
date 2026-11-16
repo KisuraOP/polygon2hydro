@@ -110,6 +110,48 @@ class TestStatementMarkdown(unittest.TestCase):
         self.assertNotIn("\\t{No}", md)
         self.assertEqual(md.count("$\\texttt{No}$"), 4)
 
+    def test_tex_block_legacy_tt_macro_becomes_texttt(self) -> None:
+        # Real case: magic-and-crab writes "\tt{fflush(stdout);}" in a list item.
+        tex = r"""
+        \begin{itemize}
+          \item C：\tt{fflush(stdout);}
+          \item C++：\tt{std::cout.flush();}
+        \end{itemize}
+        """
+        md = tex_block_to_markdown(tex)
+        self.assertIn("$\\texttt{fflush(stdout);}$", md)
+        self.assertIn("$\\texttt{std::cout.flush();}$", md)
+        self.assertNotIn("\\tt{", md)
+
+    def test_tex_legacy_font_switches(self) -> None:
+        md = tex_block_to_markdown(
+            r"\bf{Bold} \it{Italic} \em{Emph} \sf{PlainSf} \rm{PlainRm} {\tt GroupForm}"
+        )
+        self.assertIn("**Bold**", md)
+        self.assertIn("*Italic*", md)
+        self.assertIn("*Emph*", md)
+        self.assertIn("PlainSf", md)
+        self.assertIn("PlainRm", md)
+        self.assertIn("$\\texttt{GroupForm}$", md)
+        self.assertNotIn("\\bf", md)
+        self.assertNotIn("\\tt", md)
+
+    def test_inline_display_math_is_expanded_to_block(self) -> None:
+        # markdown-it only renders $$...$$ as display math when the delimiters
+        # own their lines; an inline "$$ a $$" stays literal on Hydro.
+        md = tex_block_to_markdown("使得：\n$$ \\mathbf{A} = \\lambda \\mathbf{B} $$\n即满足：")
+        self.assertNotIn("$$ \\mathbf", md)
+        self.assertIn("$$\n\\mathbf{A} = \\lambda \\mathbf{B}\n$$", md)
+        # blank line separates the block from the surrounding paragraph
+        self.assertIn("\n\n$$\n", md)
+        self.assertIn("\n$$\n\n", md)
+
+    def test_display_math_inside_code_block_is_untouched(self) -> None:
+        md = tex_block_to_markdown(
+            "\\begin{verbatim}\nprintf(\"$$x$$\");\n\\end{verbatim}"
+        )
+        self.assertIn("$$x$$", md)
+
     def test_tex_block_matrix_is_normalized_to_array(self) -> None:
         tex = r"""
         $$
