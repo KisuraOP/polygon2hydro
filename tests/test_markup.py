@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -282,6 +283,81 @@ B line}{--- Source}
         self.assertIn("print(1)", md)
         self.assertNotIn(r"\begin{BVerbatim}", md)
         self.assertNotIn(r"\end{BVerbatim}", md)
+
+
+class TestSectioningAndEmphasis(unittest.TestCase):
+    """Real statement shapes from Polygon run-twice problems."""
+
+    def test_block_sectioning_commands_become_headings(self) -> None:
+        tex = r"""
+        \subsubsection*{第一次运行}
+
+        第一行包含一个字符串。
+        """
+        md = tex_block_to_markdown(tex)
+        self.assertIn("### 第一次运行", md)
+        self.assertNotIn(r"\subsubsection", md)
+        self.assertNotIn("*{第一次运行}", md)
+
+    def test_block_sectioning_levels(self) -> None:
+        md = tex_block_to_markdown(
+            r"\section*{A}" + "\n\n" + r"\subsection*{B}" + "\n\n" + r"\paragraph{C}" + "\n"
+        )
+        self.assertIn("## A", md)
+        self.assertIn("### B", md)
+        self.assertIn("**C**", md)
+
+    def test_whole_statement_keeps_subsubsection_heading(self) -> None:
+        tex = r"""
+        \begin{problem}{T}{in}{out}{1s}{256MB}
+        \section{输入格式}
+        \subsubsection*{第一次运行}
+        内容。
+        \end{problem}
+        """
+        md = tex_to_markdown(tex)
+        self.assertIn("# 输入格式", md)
+        self.assertIn("### 第一次运行", md)
+        self.assertNotIn(r"\subsubsection", md)
+
+    def test_emphasis_padding_is_trimmed(self) -> None:
+        md = tex_block_to_markdown(r"\textbf{第一阶段：编码 $(op=1)$ } 给定原始字符串。")
+        # ``**x **`` would not close and would render literal asterisks; the
+        # padding must be gone while the surrounding text stays untouched.
+        self.assertIn("**第一阶段：编码 $(op=1)$**", md)
+        self.assertNotIn("$ **", md)
+        self.assertIn("** 给定原始字符串。", md)
+
+    def test_emphasis_with_leading_padding(self) -> None:
+        md = tex_block_to_markdown(r"见 \textit{ 标题仅供参考 } 说明。")
+        self.assertIn("*标题仅供参考*", md)
+
+    def test_encrypt_statement_shape_has_no_raw_tex(self) -> None:
+        tex = r"""
+        你的程序会运行两次。
+
+        \subsubsection*{第一次运行}
+
+        对于第一次运行，第一行包含一个字符串 \t{send}，第二行包含字符串 $s$（$1\le |s|\le 100$）。
+
+        \subsubsection*{第二次运行}
+
+        对于第二次运行，第一行包含一个字符串 \t{recv}。
+        """
+        md = tex_block_to_markdown(tex)
+        self.assertIn("### 第一次运行", md)
+        self.assertIn("### 第二次运行", md)
+        self.assertIn(r"$\texttt{send}$", md)
+        # No TeX control sequence may survive outside inline math.
+        outside_math = _strip_math(md)
+        self.assertNotRegex(outside_math, r"\\[a-zA-Z]{2,}")
+
+
+def _strip_math(markdown: str) -> str:
+    """Drop math spans and code fences, leaving only prose to inspect."""
+    text = markdown.replace("```", "\n")
+    text = re.sub(r"\$\$.*?\$\$", "", text, flags=re.S)
+    return re.sub(r"\$[^$\n]*\$", "", text)
 
 
 if __name__ == "__main__":

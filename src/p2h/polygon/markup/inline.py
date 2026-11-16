@@ -57,6 +57,22 @@ def _legacy_font_repl(match: re.Match[str]) -> str:
     return f"\\{alias}{{{body}}}" if alias else body
 
 
+def _emphasis_repl(marker: str):
+    """Wrap an emphasis body, trimming padding spaces.
+
+    TeX authors write ``\\textbf{第一阶段：编码 $(op=1)$ }`` with a space before
+    the closing brace.  ``**text **`` is not valid markdown emphasis (the
+    closing delimiter is not right-flanking), so the space has to go or the
+    page shows literal asterisks.
+    """
+
+    def repl(match: re.Match[str]) -> str:
+        body = match.group(1).strip()
+        return f"{marker}{body}{marker}" if body else ""
+
+    return repl
+
+
 def normalize_legacy_fonts(text: str) -> str:
     """Rewrite legacy font switches so they never reach the markdown verbatim.
 
@@ -101,9 +117,9 @@ def inline_to_markdown(text: str) -> str:
         s = s.replace(key, value)
 
     replacements = (
-        (r"\\textbf\{([^{}]*)\}", r"**\1**"),
-        (r"\\textit\{([^{}]*)\}", r"*\1*"),
-        (r"\\emph\{([^{}]*)\}", r"*\1*"),
+        (r"\\textbf\{([^{}]*)\}", _emphasis_repl("**")),
+        (r"\\textit\{([^{}]*)\}", _emphasis_repl("*")),
+        (r"\\emph\{([^{}]*)\}", _emphasis_repl("*")),
         (r"\\\$", "$"),
         (r"\\(?:left|right|displaystyle|quad|qquad)\b", ""),
         (r"~", " "),

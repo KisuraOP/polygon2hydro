@@ -35,6 +35,29 @@ def enumerate_to_markdown(match: re.Match[str]) -> str:
     return "\n" + "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1)) + "\n"
 
 
+#: Sectioning commands that Polygon statements use as sub-headings inside a
+#: statement section (``\subsubsection*{第一次运行}``).  Markdown has no levels
+#: below ``###`` worth distinguishing here, and ``paragraph`` reads as bold.
+_SECTION_COMMAND = re.compile(
+    r"^\s*\\(section|subsection|subsubsection|paragraph|subparagraph)\*?\{([^{}]*)\}\s*$",
+    re.MULTILINE,
+)
+_SECTION_MARKERS = {"section": "##", "subsection": "###", "subsubsection": "###"}
+
+
+def section_commands_to_markdown(text: str) -> str:
+    """Turn standalone sectioning commands into markdown headings."""
+
+    def repl(match: re.Match[str]) -> str:
+        command, title = match.group(1), match.group(2).strip()
+        if not title:
+            return ""
+        marker = _SECTION_MARKERS.get(command)
+        return f"\n{marker} {title}\n" if marker else f"\n**{title}**\n"
+
+    return _SECTION_COMMAND.sub(repl, text)
+
+
 def code_block_to_markdown(match: re.Match[str]) -> str:
     """Convert a verbatim-like environment to a fenced code block."""
     body = normalize_newlines(match.group(2)).strip("\n")

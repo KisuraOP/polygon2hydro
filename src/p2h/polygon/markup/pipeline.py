@@ -17,6 +17,7 @@ from p2h.polygon.markup.blocks import (
     enumerate_to_markdown,
     epigraph_to_markdown,
     itemize_to_markdown,
+    section_commands_to_markdown,
 )
 from p2h.polygon.markup.inline import image_block, inline_to_markdown
 from p2h.polygon.markup.math import (
@@ -59,6 +60,7 @@ def _replace_blocks(text: str, *, lists: bool = True, center: bool = False) -> s
         s = re.sub(_ITEMIZE, itemize_to_markdown, s, flags=re.S)
     s = re.sub(_CODE, code_block_to_markdown, s, flags=re.S)
     s = re.sub(_MATH_BLOCK, equation_block_to_markdown, s, flags=re.S)
+    s = section_commands_to_markdown(s)
     return normalize_display_math(s)
 
 
