@@ -245,5 +245,82 @@ class TestInteractiveFallback(unittest.TestCase):
             run.assert_not_called()
 
 
+RUN_TWICE_XML = """\
+<problem>
+  <judging run-count="2"/>
+  <assets>
+    <checker type="testlib"><source path="files/check.cpp"/></checker>
+    <interactor><source path="files/interactor.cpp"/><runs><run>1</run></runs></interactor>
+  </assets>
+</problem>
+"""
+
+
+def _run_twice_problem(work: Path, slug: str = "comm") -> Path:
+    root = _problem(work, slug, body="#!/bin/bash\nexit 0\n")
+    (root / "problem.xml").write_text(RUN_TWICE_XML, encoding="utf-8")
+    scripts = root / "scripts"
+    scripts.mkdir()
+    (scripts / "gen-answer.sh").write_text(
+        "#!/bin/bash\njava -jar files/CrossRun.jar 'wine files/inter.exe tests/01 out.txt'\n",
+        encoding="utf-8",
+    )
+    (scripts / "gen-answer.bat").write_text(
+        "@echo off\r\njava -jar files\\CrossRun.jar ...\r\n", encoding="utf-8"
+    )
+    return root
+
+
+class TestAnswerScriptReplacement(unittest.TestCase):
+    def test_run_twice_answer_scripts_are_neutralized(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = _run_twice_problem(Path(td))
+            doall.replace_answer_scripts(root)
+            shell = (root / "scripts" / "gen-answer.sh").read_text(encoding="utf-8")
+            batch = (root / "scripts" / "gen-answer.bat").read_bytes()
+            self.assertTrue(shell.startswith("#!/usr/bin/env bash"))
+            self.assertIn("exit 0", shell)
+            self.assertNotIn("CrossRun", shell)
+            self.assertIn(b"exit /b 0", batch)
+            self.assertNotIn(b"CrossRun", batch)
+
+    def test_problem_without_scripts_directory_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = _problem(Path(td), "plain")
+            doall.replace_answer_scripts(root)  # must not raise
+
+
+class TestRunTwiceAnswers(unittest.TestCase):
+    def _run(self, twopass_result):
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td)
+            _run_twice_problem(work)
+            info = doall.judging.JudgingInfo(run_count=2, interactor_runs=frozenset({1}))
+            with mock.patch.object(doall, "_run_scripts_for_slug", return_value=None), \
+                    mock.patch.object(doall.judging, "read_judging_info", return_value=info), \
+                    mock.patch.object(doall, "replace_answer_scripts") as replace, \
+                    mock.patch.object(
+                        doall.twopass, "generate_answers", return_value=twopass_result
+                    ) as generate:
+                failures = doall.run_doall_for_all(work, ["comm"], verbose=False)
+            return failures, replace, generate
+
+    def test_successful_generation_clears_the_build(self) -> None:
+        failures, replace, generate = self._run({})
+        self.assertEqual(failures, {})
+        replace.assert_called_once()
+        generate.assert_called_once()
+        self.assertEqual(generate.call_args.kwargs["run_count"], 2)
+        self.assertEqual(generate.call_args.kwargs["interactor_runs"], frozenset({1}))
+
+    def test_failed_generation_is_reported(self) -> None:
+        failures, _, _ = self._run({"01": "boom"})
+        self.assertIn("run-twice answers failed for 1 test(s), e.g. 01: boom", failures["comm"])
+
+    def test_unusable_binaries_are_reported(self) -> None:
+        failures, _, _ = self._run(None)
+        self.assertIn("cannot generate run-twice answers", failures["comm"])
+
+
 if __name__ == "__main__":
     unittest.main()

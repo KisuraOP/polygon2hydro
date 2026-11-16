@@ -10,6 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from p2h import kinds
 from p2h.polygon import archive
 from p2h.polygon import problem as pr
 from p2h.kinds import INTERACTIVE, TRADITIONAL
@@ -777,6 +778,149 @@ class TestPolygonReader(unittest.TestCase):
             with self.assertRaises(ValueError) as cm:
                 pr._extract_testdata_files(base, root, "diff-source", kind=TRADITIONAL)
             self.assertIn("testdata filename collision after flatten", str(cm.exception))
+
+
+class TestCommunicationProblem(unittest.TestCase):
+    def _write(
+        self,
+        root: Path,
+        slug: str,
+        *,
+        xml_extra: str = "",
+        runs: str = "<runs><run>1</run><run>2</run></runs>",
+        declared_checker: str = "files/check.cpp",
+        checker_source: bytes = b"// checker",
+        interactor_source: bytes = b"// interactor",
+    ) -> Path:
+        base = root / "problems" / slug
+        (base / "statement-sections" / "chinese").mkdir(parents=True)
+        (base / "files").mkdir(parents=True)
+        (base / "tests").mkdir(parents=True)
+        (base / "files" / "interactor.cpp").write_bytes(interactor_source)
+        (base / "files" / "check.cpp").write_bytes(checker_source)
+        (base / "problem.xml").write_text(
+            f"""
+            <problem>
+              <names><name language="chinese" value="通信题"/></names>
+              <judging run-count="2">
+                <testset><time-limit>2000</time-limit><memory-limit>1073741824</memory-limit></testset>
+              </judging>
+              <assets>
+                <checker type="testlib"><source path="{declared_checker}"/></checker>
+                <interactor><source path="files/interactor.cpp"/>{runs}</interactor>
+              </assets>
+              {xml_extra}
+            </problem>
+            """,
+            encoding="utf-8",
+        )
+        sections = base / "statement-sections" / "chinese"
+        (sections / "legend.tex").write_text("题面", encoding="utf-8")
+        (sections / "input.tex").write_text("输入", encoding="utf-8")
+        (sections / "output.tex").write_text("输出", encoding="utf-8")
+        (sections / "example.1").write_text("0 3\n", encoding="utf-8")
+        (sections / "example.1.a").write_text("2 3\n", encoding="utf-8")
+        (base / "tests" / "1").write_bytes(b"0 3\n")
+        (base / "tests" / "1.a").write_bytes(b"2 3\n")
+        return base
+
+    def test_reads_run_twice_metadata_and_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write(root, "comm")
+            problem = pr.read_problem(root, "comm")
+            self.assertIs(problem.kind, kinds.COMMUNICATION)
+            self.assertEqual(problem.run_count, 2)
+            self.assertEqual(problem.interactor_runs, frozenset({1, 2}))
+            self.assertEqual(problem.interactor_source, "// interactor")
+            self.assertEqual(problem.checker_source, "// checker")
+            self.assertTrue(problem.is_interactive)
+            self.assertIn("# Format", problem.statement_md)
+            self.assertNotIn("# Interaction", problem.statement_md)
+
+    def test_traditional_problem_has_no_embedded_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "problems" / "normal"
+            (base / "statement-sections" / "chinese").mkdir(parents=True)
+            (base / "tests").mkdir(parents=True)
+            (base / "files").mkdir(parents=True)
+            (base / "files" / "check.cpp").write_text("// checker", encoding="utf-8")
+            (base / "problem.xml").write_text(
+                '<problem><assets><checker type="testlib"><source path="files/check.cpp"/>'
+                "</checker></assets></problem>",
+                encoding="utf-8",
+            )
+            (base / "statement-sections" / "chinese" / "legend.tex").write_text("题面", encoding="utf-8")
+            (base / "tests" / "1").write_bytes(b"1\n")
+            (base / "tests" / "1.a").write_bytes(b"2\n")
+            problem = pr.read_problem(root, "normal")
+            self.assertIsNone(problem.interactor_source)
+            self.assertIsNone(problem.checker_source)
+            self.assertEqual(problem.run_count, 1)
+
+    def test_run_twice_without_interactor_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "problems" / "plain-runs"
+            (base / "statement-sections" / "chinese").mkdir(parents=True)
+            (base / "tests").mkdir(parents=True)
+            (base / "files").mkdir(parents=True)
+            (base / "files" / "check.cpp").write_text("// checker", encoding="utf-8")
+            (base / "problem.xml").write_text(
+                '<problem><judging run-count="2"/><assets><checker type="testlib">'
+                '<source path="files/check.cpp"/></checker></assets></problem>',
+                encoding="utf-8",
+            )
+            (base / "statement-sections" / "chinese" / "legend.tex").write_text("题面", encoding="utf-8")
+            (base / "tests" / "1").write_bytes(b"1\n")
+            (base / "tests" / "1.a").write_bytes(b"2\n")
+            with self.assertRaises(ValueError) as cm:
+                pr.read_problem(root, "plain-runs")
+            self.assertIn("run-twice problem without an interactor", str(cm.exception))
+
+    def test_run_twice_with_empty_runs_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write(root, "empty-runs", runs="<runs></runs>")
+            with self.assertRaises(ValueError) as cm:
+                pr.read_problem(root, "empty-runs")
+            self.assertIn("declares no interactive run", str(cm.exception))
+
+    def test_non_utf8_source_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write(root, "bad-source", interactor_source=b"// \xff\xfe")
+            with self.assertRaises(ValueError) as cm:
+                pr.read_problem(root, "bad-source")
+            self.assertIn("not valid UTF-8", str(cm.exception))
+
+    def test_declared_checker_replaces_the_default_check_cpp(self) -> None:
+        """The default ``check.cpp`` must not collide with a declared source.
+
+        On Windows the probe for ``files/check.cpp`` also matches
+        ``files/Check.cpp``; this guards the cross-platform behaviour with two
+        genuinely different files that flatten to the same name.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            (base / "files" / "sub").mkdir(parents=True)
+            (base / "files" / "check.cpp").write_bytes(b"default")
+            (base / "files" / "sub" / "check.cpp").write_bytes(b"declared")
+            root = pr.ET.fromstring(
+                """
+                <problem>
+                  <assets>
+                    <checker type="testlib">
+                      <source path="files/sub/check.cpp" />
+                    </checker>
+                  </assets>
+                </problem>
+                """
+            )
+            files = pr._extract_testdata_files(base, root, "comm", kind=kinds.COMMUNICATION)
+            self.assertEqual([name for name, _ in files], ["check.cpp"])
+            self.assertEqual(dict(files)["check.cpp"], b"declared")
 
 
 if __name__ == "__main__":

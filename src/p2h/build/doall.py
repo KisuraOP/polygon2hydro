@@ -22,8 +22,9 @@ import sys
 from pathlib import Path
 
 from p2h import kinds
-from p2h.build import crossrun
+from p2h.build import crossrun, twopass
 from p2h.build.platform import doall_command, doall_script_kind
+from p2h.polygon import judging
 
 
 def precheck_doall(work_root: Path, slugs: list[str], policy: str) -> str | None:
@@ -98,53 +99,131 @@ def run_doall_for_all(
     ``auto``     run the package's own script, fall back to CrossRun on failure
     ``package``  only ever run the package's own script
     ``crossrun`` skip the package script and use CrossRun when available
+
+    Run-twice ("communication") problems get one extra step: Polygon's generated
+    answer script only performs a single run, so its answer files describe the
+    second run's *input* instead of its expected output.  Those scripts are
+    replaced before the build runs and the answers are produced afterwards by
+    :mod:`p2h.build.twopass`.
     """
     failures: dict[str, str] = {}
     for slug in slugs:
         problem_root = work_root / "problems" / slug
-        needs_interactor = kinds.detect_from_dir(problem_root).answer_source == "interactor"
+        kind = kinds.detect_from_dir(problem_root)
+        needs_twopass_answers = kind.answer_source == "twopass"
+        if needs_twopass_answers:
+            replace_answer_scripts(problem_root)
 
-        if interactive_runner == "crossrun" and needs_interactor and crossrun.is_applicable(problem_root):
-            error = _crossrun_answers(problem_root, slug, verbose=verbose)
-            if error is not None:
-                failures[slug] = error
-                print(f"warning: doall failed for {slug}: {error}", file=sys.stderr)
-            continue
-
-        command = doall_command(problem_root)
-        if command is None:
-            if verbose:
-                print(f"[{slug}] skip doall (no doall.sh/doall.bat)")
-            continue
-
-        make_scripts_executable(problem_root)
-
-        if verbose:
-            print(f"[{slug}] running {' '.join(command)}")
-        result = subprocess.run(
-            command,
-            cwd=problem_root,
-            env=_doall_env(),
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            errors="replace",
+        error = _run_scripts_for_slug(
+            problem_root,
+            slug,
+            verbose=verbose,
+            interactive_runner=interactive_runner,
+            needs_interactor=kind.answer_source == "interactor",
         )
-        if verbose and result.stdout:
-            print(result.stdout, end="")
-        if result.returncode != 0:
-            tail = _error_tail(result)
-            if interactive_runner != "package" and needs_interactor:
-                recovered = _crossrun_answers(problem_root, slug, verbose=verbose)
-                if recovered is None:
-                    continue
-                tail = f"{tail}; {recovered}"
-            failures[slug] = tail
-            print(f"warning: doall failed for {slug}: {tail}", file=sys.stderr)
-            continue
-        if verbose:
-            print(f"[{slug}] doall done")
+        if needs_twopass_answers:
+            error = _twopass_answers(problem_root, slug, verbose=verbose) or error
+        if error is not None:
+            failures[slug] = error
+            print(f"warning: doall failed for {slug}: {error}", file=sys.stderr)
     return failures
+
+
+def _run_scripts_for_slug(
+    problem_root: Path,
+    slug: str,
+    *,
+    verbose: bool,
+    interactive_runner: str,
+    needs_interactor: bool,
+) -> str | None:
+    """Run one problem's own build scripts; return why they failed, if they did."""
+    if interactive_runner == "crossrun" and needs_interactor and crossrun.is_applicable(problem_root):
+        return _crossrun_answers(problem_root, slug, verbose=verbose)
+
+    command = doall_command(problem_root)
+    if command is None:
+        if verbose:
+            print(f"[{slug}] skip doall (no doall.sh/doall.bat)")
+        return None
+
+    make_scripts_executable(problem_root)
+
+    if verbose:
+        print(f"[{slug}] running {' '.join(command)}")
+    result = subprocess.run(
+        command,
+        cwd=problem_root,
+        env=_doall_env(),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    if verbose and result.stdout:
+        print(result.stdout, end="")
+    if result.returncode != 0:
+        tail = _error_tail(result)
+        if interactive_runner != "package" and needs_interactor:
+            recovered = _crossrun_answers(problem_root, slug, verbose=verbose)
+            if recovered is None:
+                return None
+            tail = f"{tail}; {recovered}"
+        return tail
+    if verbose:
+        print(f"[{slug}] doall done")
+    return None
+
+
+def replace_answer_scripts(problem_root: Path) -> None:
+    """Neutralise Polygon's single-run answer script for a run-twice problem.
+
+    The package's ``gen-answer`` runs the model solution once, so the file it
+    writes is the *second run's input*, not the expected answer.  Running it is
+    pointless (and slow: its CrossRun host deadlocks on larger tests), so the
+    build gets a no-op and :mod:`p2h.build.twopass` produces the real answers.
+    """
+    scripts_dir = problem_root / "scripts"
+    if not scripts_dir.exists():
+        return
+    replacements = {
+        "gen-answer.sh": (
+            "#!/usr/bin/env bash\n"
+            "# Replaced by polygon2hydro: for a run-twice problem this script would\n"
+            "# only run the first pass. The answer files are rebuilt afterwards.\n"
+            "exit 0\n"
+        ).encode(),
+        "gen-answer.bat": (
+            "@echo off\r\n"
+            "rem Replaced by polygon2hydro: run-twice answers are rebuilt afterwards.\r\n"
+            "exit /b 0\r\n"
+        ).encode(),
+    }
+    for name, content in replacements.items():
+        path = scripts_dir / name
+        if path.exists():
+            path.write_bytes(content)
+
+
+def _twopass_answers(problem_root: Path, slug: str, *, verbose: bool) -> str | None:
+    """Rebuild the answer files of a run-twice problem. ``None`` means success."""
+    info = judging.read_judging_info(problem_root)
+    errors = twopass.generate_answers(
+        problem_root,
+        run_count=info.run_count,
+        interactor_runs=info.interactor_runs,
+        verbose=verbose,
+    )
+    if errors is None:
+        return (
+            "cannot generate run-twice answers: the package is missing its "
+            "interactor or model-solution binary"
+        )
+    if errors:
+        test, detail = next(iter(errors.items()))
+        return f"run-twice answers failed for {len(errors)} test(s), e.g. {test}: {detail}"
+    print(f"info: rebuilt run-twice answers for {slug}", file=sys.stderr)
+    return None
 
 
 def _crossrun_answers(problem_root: Path, slug: str, *, verbose: bool) -> str | None:

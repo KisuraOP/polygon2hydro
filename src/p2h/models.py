@@ -27,8 +27,16 @@ class ProblemData:
     kind: ProblemKind = TRADITIONAL
     interactor_name: str | None = None
     checker_name: str | None = None
+    #: Polygon's ``run-count``: how many times the participant is executed.
+    run_count: int = 1
+    #: Runs judged interactively (see :mod:`p2h.polygon.judging`).
+    interactor_runs: frozenset[int] = frozenset()
+    #: Sources of the problem's own interactor/checker, needed to build the
+    #: Hydro adapter for a run-twice problem.
+    interactor_source: str | None = None
+    checker_source: str | None = None
 
     @property
     def is_interactive(self) -> bool:
-        """Convenience predicate; prefer reading ``kind`` flags directly."""
-        return self.kind.answer_source == "interactor"
+        """True when the participant talks to an interactor (any kind)."""
+        return self.kind.hydro_type == "interactive"

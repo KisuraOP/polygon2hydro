@@ -11,9 +11,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from p2h.hydro import run_twice
 from p2h.hydro.package import write_problem_zip
 from p2h.models import ProblemData, TestCase
-from p2h.kinds import INTERACTIVE, TRADITIONAL
+from p2h.kinds import COMMUNICATION, INTERACTIVE, TRADITIONAL
 
 
 class TestHydroWriter(unittest.TestCase):
@@ -235,6 +236,106 @@ class TestHydroWriter(unittest.TestCase):
                     tags=[],
                 )
             self.assertIn("traditional problem missing checker source filename", str(cm.exception))
+
+
+class TestRunTwicePackage(unittest.TestCase):
+    def _problem(self, **overrides) -> ProblemData:
+        fields = dict(
+            slug="interval-sum",
+            title="区间和",
+            time_ms=1000,
+            memory_mb=1024,
+            statement_md="# Description\n\n# Format\n",
+            tests=[TestCase(index=1, input_data=b"cat 1\n", output_data=b"5\n")],
+            kind=COMMUNICATION,
+            interactor_name="inter.cpp",
+            checker_name="check.cpp",
+            run_count=2,
+            interactor_runs=frozenset({1}),
+            interactor_source="#include \"testlib.h\"\nint main() { return 0; }\n",
+            checker_source="#include \"testlib.h\"\nint main() { return 0; }\n",
+        )
+        fields.update(overrides)
+        return ProblemData(**fields)
+
+    def _write(self, problem: ProblemData) -> Path:
+        td = tempfile.mkdtemp()
+        return write_problem_zip(
+            problem=problem,
+            output_dir=Path(td) / "out",
+            local_id=1,
+            pid="P4000",
+            owner=1,
+            tags=[],
+        )
+
+    def test_config_runs_the_generated_interactor_multiple_times(self) -> None:
+        zip_path = self._write(self._problem())
+        with zipfile.ZipFile(zip_path) as zf:
+            config = zf.read("1/testdata/config.yaml").decode()
+            self.assertIn("type: interactive", config)
+            self.assertIn("multi_pass: 2", config)
+            self.assertIn("interactor: p2h_interactor.cpp", config)
+            # Hydro's interactive judge never reads a ``checker`` entry: the
+            # checker source is embedded into the generated interactor instead.
+            self.assertNotIn("checker_type:", config)
+            self.assertNotIn("checker:", config)
+
+            names = set(zf.namelist())
+            self.assertIn("1/testdata/p2h_interactor.cpp", names)
+            adapter = zf.read("1/testdata/p2h_interactor.cpp").decode()
+            self.assertIn("constexpr int kRunCount = 2;", adapter)
+            self.assertIn("constexpr unsigned kInteractiveMask = 1u;", adapter)
+            self.assertIn("nextpass.in", adapter)
+
+    def test_adapter_is_deterministic(self) -> None:
+        first = self._write(self._problem())
+        second = self._write(self._problem())
+        with zipfile.ZipFile(first) as a, zipfile.ZipFile(second) as b:
+            self.assertEqual(
+                a.read("1/testdata/p2h_interactor.cpp"),
+                b.read("1/testdata/p2h_interactor.cpp"),
+            )
+
+    def test_missing_sources_are_reported(self) -> None:
+        zip_dir = tempfile.mkdtemp()
+        with self.assertRaises(ValueError) as cm:
+            write_problem_zip(
+                problem=self._problem(interactor_source=None),
+                output_dir=Path(zip_dir) / "out",
+                local_id=1,
+                pid="P4000",
+                owner=1,
+                tags=[],
+            )
+        self.assertIn("missing its interactor/checker source", str(cm.exception))
+
+    def test_adapter_filename_collision_is_reported(self) -> None:
+        zip_dir = tempfile.mkdtemp()
+        problem = self._problem(testdata_files=[(run_twice.ADAPTER_FILENAME, b"taken")])
+        with self.assertRaises(ValueError) as cm:
+            write_problem_zip(
+                problem=problem,
+                output_dir=Path(zip_dir) / "out",
+                local_id=1,
+                pid="P4000",
+                owner=1,
+                tags=[],
+            )
+        self.assertIn("testdata file collision", str(cm.exception))
+
+    def test_too_few_runs_are_reported(self) -> None:
+        zip_dir = tempfile.mkdtemp()
+        with self.assertRaises(ValueError) as cm:
+            write_problem_zip(
+                problem=self._problem(run_count=1),
+                output_dir=Path(zip_dir) / "out",
+                local_id=1,
+                pid="P4000",
+                owner=1,
+                tags=[],
+            )
+        self.assertIn("at least 2 runs", str(cm.exception))
 
 
 if __name__ == "__main__":

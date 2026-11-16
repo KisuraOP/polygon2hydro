@@ -6,6 +6,7 @@ from pathlib import Path, PurePosixPath
 
 from p2h import kinds
 from p2h.models import ProblemData, TestCase
+from p2h.polygon import judging
 from p2h.polygon.markup import html_to_markdown, tex_block_to_markdown, tex_to_markdown
 
 
@@ -28,10 +29,15 @@ def read_problem(
 
     title = _extract_title(root, statement_language=statement_language) or slug
     time_ms, memory_mb = _extract_limits(root)
+    judging_info = judging.parse_judging(root)
     kind = kinds.detect(root)
     interactor_name = _extract_interactor_name(root)
     checker_name = _extract_checker_name(root)
     _check_required_sources(slug, kind, interactor_name=interactor_name, checker_name=checker_name)
+    _check_judging_supported(slug, kind, judging_info)
+    interactor_source, checker_source = _extract_embedded_sources(
+        base, root, slug, kind=kind
+    )
 
     statement_md, statement_dir = _extract_statement_markdown(
         base,
@@ -61,6 +67,10 @@ def read_problem(
         kind=kind,
         interactor_name=interactor_name,
         checker_name=checker_name,
+        run_count=judging_info.run_count,
+        interactor_runs=judging_info.interactor_runs,
+        interactor_source=interactor_source,
+        checker_source=checker_source,
     )
 
 
@@ -76,6 +86,70 @@ def _check_required_sources(
         raise ValueError(f"{slug}: missing checker source in problem.xml assets/checker")
     if kind.needs_interactor and not interactor_name:
         raise ValueError(f"{slug}: missing interactor source in problem.xml assets/interactor")
+
+
+def _check_judging_supported(slug: str, kind: kinds.ProblemKind, judging_info: judging.JudgingInfo) -> None:
+    """Refuse a judging model the converter does not know how to reproduce."""
+    if judging_info.run_count <= 1:
+        return
+    if not kind.needs_interactor:
+        raise ValueError(
+            f"{slug}: run-twice problem without an interactor is not supported "
+            f"(run-count={judging_info.run_count}); only interactive run-twice "
+            "problems can be converted"
+        )
+    if not judging_info.interactor_runs:
+        raise ValueError(
+            f"{slug}: run-twice problem declares no interactive run "
+            "(assets/interactor/runs is empty)"
+        )
+
+
+def _extract_embedded_sources(
+    base: Path,
+    root: ET.Element,
+    slug: str,
+    *,
+    kind: kinds.ProblemKind,
+) -> tuple[str | None, str | None]:
+    """Read the interactor/checker sources a run-twice problem embeds in Hydro."""
+    if kind.answer_source != "twopass":
+        return None, None
+
+    interactor_node = root.find("./assets/interactor")
+    checker_node = root.find("./assets/checker")
+    if interactor_node is None or checker_node is None:
+        raise ValueError(f"{slug}: run-twice problem needs both an interactor and a checker")
+    return (
+        _read_source_text(base, interactor_node, slug, "interactor"),
+        _read_source_text(base, checker_node, slug, "checker"),
+    )
+
+
+def _read_source_text(base: Path, node: ET.Element, slug: str, label: str) -> str:
+    rel = _declared_source_path(node)
+    if not rel:
+        raise ValueError(f"{slug}: {label} has no source path in problem.xml")
+    path = base / PurePosixPath(rel)
+    if not path.is_file():
+        raise ValueError(f"{slug}: declared {label} source not found: {rel}")
+    try:
+        return path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"{slug}: {label} source {rel} is not valid UTF-8 ({exc}); "
+            "cannot embed it into the generated Hydro interactor"
+        ) from exc
+
+
+def _declared_source_path(node: ET.Element) -> str:
+    direct = (node.attrib.get("path") or "").strip()
+    if direct:
+        return direct
+    source = node.find("source")
+    if source is None:
+        return ""
+    return (source.attrib.get("path") or "").strip()
 
 
 def _language_priority(statement_language: str | None) -> tuple[str, ...]:
@@ -420,9 +494,15 @@ def _extract_testdata_files(base: Path, root: ET.Element, slug: str, *, kind: ki
             if rel:
                 _add_rel_path(rel)
 
+        # Some packages ship a default checker source without declaring it. Only
+        # add it when the declared source is not already called that: Windows
+        # filesystems are case-insensitive, so "files/Check.cpp" makes a probe
+        # for "files/check.cpp" succeed and both spellings would flatten to a
+        # collision the other platform never sees.
         default_rel = "files/check.cpp"
         default_checker = base / PurePosixPath(default_rel)
-        if default_checker.exists() and default_checker.is_file():
-            _add_rel_path(default_rel)
+        if not any(name.lower() == "check.cpp" for name in out):
+            if default_checker.exists() and default_checker.is_file():
+                _add_rel_path(default_rel)
 
     return sorted(out.items(), key=lambda x: x[0])

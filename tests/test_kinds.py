@@ -49,6 +49,40 @@ class TestDetection(unittest.TestCase):
         self.assertIsNone(kinds.by_key("nope"))
 
 
+class TestCommunicationKind(unittest.TestCase):
+    RUN_TWICE = (
+        '<judging run-count="2"/>'
+        '<assets><checker type="testlib"><source path="files/ck.cpp"/></checker>'
+        '<interactor><source path="files/interactor.cpp"/></interactor></assets>'
+    )
+
+    def test_run_twice_interactive_is_communication(self) -> None:
+        self.assertIs(kinds.detect(_xml(self.RUN_TWICE)), kinds.COMMUNICATION)
+
+    def test_single_run_interactive_stays_interactive(self) -> None:
+        body = '<judging run-count="1"/>' + INTERACTOR
+        self.assertIs(kinds.detect(_xml(body)), kinds.INTERACTIVE)
+
+    def test_run_twice_without_interactor_falls_back_to_traditional(self) -> None:
+        # The reader refuses this combination with an actionable error; the
+        # detector itself only reports what markers it sees.
+        body = '<judging run-count="2"/>' + CHECKER
+        self.assertIs(kinds.detect(_xml(body)), kinds.FALLBACK)
+
+    def test_communication_flags(self) -> None:
+        kind = kinds.COMMUNICATION
+        self.assertEqual(kind.hydro_type, "interactive")
+        self.assertTrue(kind.needs_interactor)
+        self.assertTrue(kind.needs_checker)
+        self.assertEqual(kind.answer_source, "twopass")
+        self.assertFalse(kind.uses_interaction_section)
+        self.assertTrue(kind.accepts(2))
+        self.assertFalse(kind.accepts(1))
+
+    def test_by_key(self) -> None:
+        self.assertIs(kinds.by_key("communication"), kinds.COMMUNICATION)
+
+
 class TestFutureKindNeedsNoCodeChange(unittest.TestCase):
     """A new kind is data. The writer and the reader must follow the flags."""
 

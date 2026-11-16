@@ -17,15 +17,18 @@ two hosts for that:
 ``wine`` prefix inside its arguments is platform specific. So when a package
 carries it, this module can rebuild the answers without ``runexe`` at all. It is
 used as a fallback: the package's own build script always gets the first try.
+
+Run-twice (communication) problems cannot be answered this way; see
+:mod:`p2h.build.twopass`.
 """
 
 from __future__ import annotations
 
 import shutil
 import subprocess
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from p2h.build import binaries
 from p2h.build.platform import IS_WINDOWS
 
 
@@ -61,10 +64,10 @@ def generate_answers(problem_root: Path, *, verbose: bool = False) -> dict[str, 
     """
     if not is_applicable(problem_root):
         return None
-    binaries = _binaries(problem_root)
-    if binaries is None:
+    binaries_pair = _binaries(problem_root)
+    if binaries_pair is None:
         return None
-    interactor, solution = binaries
+    interactor, solution = binaries_pair
 
     inputs = _pending_inputs(problem_root)
     if not inputs:
@@ -122,81 +125,15 @@ def _crossrun_command(
 
 def _binaries(problem_root: Path) -> tuple[str, str] | None:
     """Locate the interactor and participant binaries, or ``None``."""
-    xml_path = problem_root / "problem.xml"
-    if not xml_path.exists():
-        return None
-    try:
-        root = ET.fromstring(xml_path.read_bytes())
-    except ET.ParseError:
-        return None
-
-    if root.find("./assets/interactor") is None:
-        return None
-
-    interactor = _declared_binary(root, "./assets/interactor", problem_root, default="files/interactor.exe")
+    interactor = binaries.interactor_binary(problem_root)
     if interactor is None:
         return None
-
-    solution = _participant_solution(root, problem_root)
+    solution = binaries.main_solution_binary(problem_root)
     if solution is None:
         return None
     return interactor, solution
 
 
-def _declared_binary(root: ET.Element, node_path: str, problem_root: Path, *, default: str) -> str | None:
-    node = root.find(node_path)
-    if node is None:
-        return None
-    source = node.find("source")
-    declared = (source.attrib.get("path") if source is not None else node.attrib.get("path")) or ""
-    candidates = []
-    if declared:
-        candidates.append(str(Path(declared).with_suffix(".exe")).replace("\\", "/"))
-    candidates.append(default)
-    for candidate in candidates:
-        if (problem_root / candidate).exists():
-            return candidate
-    return None
-
-
-def _participant_solution(root: ET.Element, problem_root: Path) -> str | None:
-    """Pick the solution to drive the interactor.
-
-    Polygon lists every solution, including deliberately wrong ones named
-    ``should_wa*``/``should_ile*``; those must never be used to produce answers.
-    """
-    preferred: list[str] = []
-    fallback: list[str] = []
-    for solution in root.findall("./assets/solutions/solution"):
-        source = solution.find("source")
-        declared = (source.attrib.get("path") if source is not None else solution.attrib.get("path")) or ""
-        if not declared:
-            continue
-        binary = str(Path(declared).with_suffix(".exe")).replace("\\", "/")
-        if not (problem_root / binary).exists():
-            continue
-        if Path(binary).stem.startswith("should_"):
-            fallback.append(binary)
-        else:
-            preferred.append(binary)
-
-    for candidate in preferred + fallback:
-        return candidate
-    return None
-
-
 def _pending_inputs(problem_root: Path) -> list[Path]:
     """Test inputs that still need an answer file, in Polygon's ordering."""
-    tests_dir = problem_root / "tests"
-    if not tests_dir.exists():
-        return []
-    pending = [
-        path
-        for path in tests_dir.iterdir()
-        if path.is_file()
-        and not path.name.endswith((".a", ".out"))
-        # ``.a`` and ``.out`` are both answer spellings; either one is enough.
-        and not path.with_name(path.name + ".a").exists()
-        and not path.with_name(path.name + ".out").exists()
-    ]
-    return sorted(pending, key=lambda p: p.name)
+    return binaries.pending_inputs(problem_root)
